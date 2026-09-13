@@ -221,7 +221,7 @@ export class SystemApiService {
         workReceived: 42,
         autotuneEnabled: 1,
         autotune: {
-          state: "stable",
+          state: "stable" as const,
           stableChecks: 4,
           rescueAttempts: 0,
           backoffRemaining: 0,
