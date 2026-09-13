@@ -219,6 +219,15 @@ export class SystemApiService {
         coinbaseValueUserSatoshis: 50,
         miningPaused: false,
         workReceived: 42,
+        autotuneEnabled: 1,
+        autotune: {
+          state: "stable",
+          stableChecks: 4,
+          rescueAttempts: 0,
+          backoffRemaining: 0,
+          lastStepMv: -25,
+          lastActionTimeS: 180,
+        },
       }
     ).pipe(delay(1000));
   }

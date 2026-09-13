@@ -150,7 +150,16 @@ const mockSystemInfo: ISystemInfo = {
   fallbackStratumPort: 3333,
   fallbackStratumProtocol: 'SV1',
   isUsingFallbackStratum: 0,
-  useFallbackStratum: 0
+  useFallbackStratum: 0,
+  autotuneEnabled: 1,
+  autotune: {
+    state: 'stable',
+    stableChecks: 4,
+    rescueAttempts: 0,
+    backoffRemaining: 0,
+    lastStepMv: -25,
+    lastActionTimeS: 180,
+  },
 };
 
 const mockSystemStatistics: ISystemStatistics = {

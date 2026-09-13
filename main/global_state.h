@@ -152,6 +152,24 @@ typedef struct AsicTaskModule
     pthread_mutex_t valid_jobs_lock;
 } AsicTaskModule;
 
+typedef enum {
+    AUTOTUNE_STATE_IDLE = 0,
+    AUTOTUNE_STATE_STABLE,
+    AUTOTUNE_STATE_RESCUING,
+    AUTOTUNE_STATE_SHAVING,
+    AUTOTUNE_STATE_HELD,
+} AutotuneState;
+
+typedef struct
+{
+    AutotuneState state;
+    int stable_checks;
+    int rescue_attempts;
+    int backoff_remaining;
+    int16_t last_step_mv; // signed: positive = rescue step, negative = shave step
+    uint32_t last_action_time_s; // seconds since boot, 0 = never
+} AutotuneModule;
+
 typedef struct GlobalState
 {
     TaskHandle_t create_jobs_task_handle;
@@ -164,6 +182,7 @@ typedef struct GlobalState
     PowerManagementModule POWER_MANAGEMENT_MODULE;
     SelfTestModule SELF_TEST_MODULE;
     HashrateMonitorModule HASHRATE_MONITOR_MODULE;
+    AutotuneModule AUTOTUNE_MODULE;
 
     esp_transport_handle_t transport;
     pthread_mutex_t transport_mutex;

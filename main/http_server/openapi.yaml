@@ -268,6 +268,8 @@ components:
         - nominalVoltage
         - overheat_mode
         - overclockEnabled
+        - autotuneEnabled
+        - autotune
         - primaryPoolIndex
         - secondaryPoolIndex
         - useFallbackStratum
@@ -489,6 +491,9 @@ components:
         overclockEnabled:
           type: integer
           description: Set custom voltage/frequency in AxeOS
+        autotuneEnabled:
+          type: integer
+          description: Automatic voltage tuning based on ASIC stability (0=off, 1=on)
         useCustomWWW:
           type: integer
           description: Whether to serve files from the SPIFFS www partition instead of the embedded Web UI (0=embedded, 1=custom/SPIFFS)
@@ -683,6 +688,35 @@ components:
               description: Hashrate register value per ASIC
               items:
                 $ref: '#/components/schemas/HashrateMonitorAsic'
+        autotune:
+          type: object
+          required:
+            - state
+            - stableChecks
+            - rescueAttempts
+            - backoffRemaining
+            - lastStepMv
+            - lastActionTimeS
+          properties:
+            state:
+              type: string
+              description: Current autotune state
+              enum: [idle, stable, rescuing, shaving, held]
+            stableChecks:
+              type: integer
+              description: Consecutive stable checks since the last rescue or shave
+            rescueAttempts:
+              type: integer
+              description: Consecutive voltage rescue attempts since the last stable reading
+            backoffRemaining:
+              type: integer
+              description: Checks remaining in the post-rescue cooldown before shaving may resume
+            lastStepMv:
+              type: integer
+              description: Size and direction of the last voltage step (positive=rescue, negative=shave)
+            lastActionTimeS:
+              type: integer
+              description: Seconds since boot when the last voltage step was made (0=never)
         miningPaused:
           type: boolean
           description: Whether mining is currently paused
@@ -970,6 +1004,12 @@ components:
         overclockEnabled:
           type: integer
           description: Set custom voltage/frequency in AxeOS (0=disabled, 1=enabled)
+          enum: [0,1]
+          examples:
+            - 0
+        autotuneEnabled:
+          type: integer
+          description: Automatic voltage tuning based on ASIC stability (0=disabled, 1=enabled)
           enum: [0,1]
           examples:
             - 0

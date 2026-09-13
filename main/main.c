@@ -9,6 +9,7 @@
 #include "asic_result_task.h"
 #include "create_jobs_task.h"
 #include "hashrate_monitor_task.h"
+#include "autotune_task.h"
 #include "fan_controller_task.h"
 #include "statistics_task.h"
 #include "global_state.h"
@@ -248,6 +249,9 @@ void app_main(void)
 
             if (xTaskCreateWithCaps(hashrate_monitor_task, "hashrate monitor", 8192, (void *) &GLOBAL_STATE, 5, NULL, MALLOC_CAP_SPIRAM) != pdPASS) {
                 ESP_LOGE(TAG, "Error creating hashrate monitor task");
+            }
+            if (xTaskCreateWithCaps(autotune_task, "autotune", 4096, (void *) &GLOBAL_STATE, 3, NULL, MALLOC_CAP_SPIRAM) != pdPASS) {
+                ESP_LOGE(TAG, "Error creating autotune task");
             }
             if (xTaskCreateWithCaps(statistics_task, "statistics", 8192, (void *) &GLOBAL_STATE, 3, NULL, MALLOC_CAP_SPIRAM) != pdPASS) {
                 ESP_LOGE(TAG, "Error creating statistics task");

@@ -221,6 +221,7 @@ static void system_api_add_config(cJSON *root, GlobalState *g) {
     // User Preferences
     cJSON_AddNumberToObject(root, "useCustomWWW", nvs_config_get_bool(NVS_CONFIG_USE_CUSTOM_WWW) ? 1 : 0);
     cJSON_AddNumberToObject(root, "overclockEnabled", nvs_config_get_bool(NVS_CONFIG_OVERCLOCK_ENABLED) ? 1 : 0);
+    cJSON_AddNumberToObject(root, "autotuneEnabled", nvs_config_get_bool(NVS_CONFIG_AUTOTUNE_ENABLED) ? 1 : 0);
     char *disp_name = nvs_config_get_string(NVS_CONFIG_DISPLAY);
     cJSON_AddStringToObject(root, "display", disp_name ? disp_name : "");
     free(disp_name);
@@ -264,6 +265,32 @@ static void system_api_add_hashrate_monitor(cJSON *root, GlobalState *g) {
             cJSON_AddItemToArray(domains, cJSON_CreateNumber(measurement.hashrate));
         }
     }
+}
+
+static const char * autotune_state_str(AutotuneState state) {
+    switch (state) {
+        case AUTOTUNE_STATE_STABLE:   return "stable";
+        case AUTOTUNE_STATE_RESCUING: return "rescuing";
+        case AUTOTUNE_STATE_SHAVING:  return "shaving";
+        case AUTOTUNE_STATE_HELD:     return "held";
+        default:                      return "idle";
+    }
+}
+
+static void system_api_add_autotune(cJSON *root, GlobalState *g) {
+    if (!root || !g) return;
+
+    AutotuneModule * at = &g->AUTOTUNE_MODULE;
+
+    cJSON *autotune = cJSON_CreateObject();
+    cJSON_AddItemToObject(root, "autotune", autotune);
+
+    cJSON_AddStringToObject(autotune, "state", autotune_state_str(at->state));
+    cJSON_AddNumberToObject(autotune, "stableChecks", at->stable_checks);
+    cJSON_AddNumberToObject(autotune, "rescueAttempts", at->rescue_attempts);
+    cJSON_AddNumberToObject(autotune, "backoffRemaining", at->backoff_remaining);
+    cJSON_AddNumberToObject(autotune, "lastStepMv", at->last_step_mv);
+    cJSON_AddNumberToObject(autotune, "lastActionTimeS", at->last_action_time_s);
 }
 
 static void system_api_add_rejected_reasons(cJSON *root, GlobalState *g) {
@@ -349,6 +376,7 @@ cJSON* system_api_get_full_json(GlobalState * GLOBAL_STATE) {
     system_api_add_telemetry(root, GLOBAL_STATE);
     system_api_add_config(root, GLOBAL_STATE);
     system_api_add_hashrate_monitor(root, GLOBAL_STATE);
+    system_api_add_autotune(root, GLOBAL_STATE);
     system_api_add_partitions(root, GLOBAL_STATE);
 
     // Arrays that involve global state loops (not simple addition)

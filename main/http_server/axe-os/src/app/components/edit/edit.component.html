@@ -52,6 +52,15 @@
         </div>
       }
       <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
+        <label for="autotuneEnabled" class="w-full md:w-2/12 font-medium cursor-pointer select-none"
+          appTooltip="Automatically adjusts core voltage up when the ASIC is unstable, and shaves it back down when stable, within the safe range for this board.">
+          Autotune
+        </label>
+        <div class="w-full md:w-10/12 flex items-center">
+          <app-checkbox name="autotuneEnabled" formControlName="autotuneEnabled" inputId="autotuneEnabled" [binary]="true"></app-checkbox>
+        </div>
+      </div>
+      <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
         <label for="autofanspeed" class="w-full md:w-2/12 font-medium cursor-pointer select-none">Automatic Fan Control</label>
         <div class="w-full md:w-10/12 flex items-center">
           <app-checkbox name="autofanspeed" formControlName="autofanspeed" inputId="autofanspeed" [binary]="true"></app-checkbox>
