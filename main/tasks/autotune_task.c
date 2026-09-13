@@ -11,7 +11,8 @@
 // constants: this is a soft, conservative comfort limit that should trip
 // well before the hardware safety cutoff ever gets involved.
 #define POLL_RATE_MS 10000
-#define AUTOTUNE_TEMP_LIMIT_C 68.0f#define DOMAIN_SHORTFALL_LIMIT 0.50f       // a single hash domain running below 50% of its expected share counts as unstable
+#define AUTOTUNE_TEMP_LIMIT_C 68.0f
+#define DOMAIN_SHORTFALL_LIMIT 0.50f       // a single hash domain running below 50% of its expected share counts as unstable
 #define ERROR_RATE_LIMIT_PCT 2.0f          // >2% ASIC error rate counts as unstable
 
 #define STABLE_CHECKS_BEFORE_ACTION 6       // ~60s of stability before climbing freq or shaving voltage
@@ -130,13 +131,6 @@ static bool read_is_unstable(GlobalState * GLOBAL_STATE, float * out_temp)
 
     if (temp > AUTOTUNE_TEMP_LIMIT_C) {
         return true;
-    }
-
-    if (pm->expected_hashrate > 0.0f) {
-        float shortfall = (pm->expected_hashrate - sys->current_hashrate) / pm->expected_hashrate;
-        if (shortfall > HASHRATE_SHORTFALL_LIMIT) {
-            return true;
-        }
     }
 
     if (sys->error_percentage > ERROR_RATE_LIMIT_PCT) {
