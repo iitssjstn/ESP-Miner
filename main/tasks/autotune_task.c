@@ -17,7 +17,8 @@
 #define ERROR_RATE_LIMIT_PCT 2.0f          // >2% ASIC error rate counts as unstable
 
 #define STABLE_CHECKS_BEFORE_ACTION 6       // ~60s of stability before climbing freq or shaving voltage
-#define BACKOFF_CHECKS_AFTER_ACTION 6        // ~60s cooldown after any corrective step before the next one
+#define BACKOFF_CHECKS_AFTER_ACTION 6        // ~60s cooldown after a climb, shave, or rescue before the next one
+#define RETREAT_COOLDOWN_CHECKS 3            // ~30s cooldown between frequency retreats - lets each step actually prove itself instead of cascading down every poll
 #define MAX_CONSECUTIVE_RESCUES 3
 
 #define VENDOR_VOLTAGE_STEP_MV 25
@@ -226,21 +227,28 @@ void autotune_task(void *pvParameters)
                 mark_action_time(at);
             } else if (core_frequency > floor_freq_mhz) {
                 // Voltage is maxed out or we've exhausted rescue attempts at this
-                // frequency - back off frequency instead of holding indefinitely.
-                float new_frequency = core_frequency - frequency_step(asic, core_frequency, overclock_enabled);
-                if (new_frequency < floor_freq_mhz) {
-                    new_frequency = floor_freq_mhz;
-                }
+                // frequency. Retreat is gated by its own short cooldown so a single
+                // rough patch can't cascade multiple steps down before the previous
+                // step even gets a chance to prove whether it's actually stable.
+                if (at->backoff_remaining > 0) {
+                    at->backoff_remaining--;
+                    at->state = AUTOTUNE_STATE_HELD;
+                } else {
+                    float new_frequency = core_frequency - frequency_step(asic, core_frequency, overclock_enabled);
+                    if (new_frequency < floor_freq_mhz) {
+                        new_frequency = floor_freq_mhz;
+                    }
 
-                ESP_LOGI(TAG, "Unstable at voltage ceiling (%umV) - retreating frequency %g -> %g MHz",
-                         core_voltage, core_frequency, new_frequency);
-                nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, new_frequency);
-                at->rescue_attempts = 0;
-                rescue_limit_warned = false;
-                at->backoff_remaining = BACKOFF_CHECKS_AFTER_ACTION;
-                at->state = AUTOTUNE_STATE_RETREATING;
-                at->last_step_mhz = (int16_t)(new_frequency - core_frequency);
-                mark_action_time(at);
+                    ESP_LOGI(TAG, "Unstable at voltage ceiling (%umV) - retreating frequency %g -> %g MHz",
+                             core_voltage, core_frequency, new_frequency);
+                    nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, new_frequency);
+                    at->rescue_attempts = 0;
+                    rescue_limit_warned = false;
+                    at->backoff_remaining = RETREAT_COOLDOWN_CHECKS;
+                    at->state = AUTOTUNE_STATE_RETREATING;
+                    at->last_step_mhz = (int16_t)(new_frequency - core_frequency);
+                    mark_action_time(at);
+                }
             } else {
                 at->state = AUTOTUNE_STATE_HELD;
                 if (!rescue_limit_warned) {
