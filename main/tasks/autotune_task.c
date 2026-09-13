@@ -129,7 +129,19 @@ static bool read_is_unstable(GlobalState * GLOBAL_STATE, float * out_temp)
     float temp = pm->chip_temp_avg > pm->chip_temp2_avg ? pm->chip_temp_avg : pm->chip_temp2_avg;
     *out_temp = temp;
 
-    if (temp > AUTOTUNE_TEMP_LIMIT_C) {
+    // In Performance mode, the user's own temp ceiling (if set) IS the real
+    // limit - not just a soft "stop climbing" marker. Otherwise a custom
+    // ceiling above the 68C default would never actually be reachable: this
+    // check would keep calling it unstable and retreating well below it.
+    float temp_limit = AUTOTUNE_TEMP_LIMIT_C;
+    if (nvs_config_get_bool(NVS_CONFIG_AUTOTUNE_PROFILE)) {
+        float user_max_temp = nvs_config_get_float(NVS_CONFIG_AUTOTUNE_MAX_TEMP);
+        if (user_max_temp > 0.0f) {
+            temp_limit = user_max_temp;
+        }
+    }
+
+    if (temp > temp_limit) {
         return true;
     }
 
