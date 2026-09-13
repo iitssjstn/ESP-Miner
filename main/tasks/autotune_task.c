@@ -16,7 +16,7 @@
 #define ERROR_RATE_LIMIT_PCT 2.0f          // >2% ASIC error rate counts as unstable
 
 #define STABLE_CHECKS_BEFORE_ACTION 6       // ~60s of stability before climbing freq or shaving voltage
-#define BACKOFF_CHECKS_AFTER_ACTION 6        // ~60s cooldown after a climb, shave, or rescue before the next one
+#define RESCUE_COOLDOWN_CHECKS 18             // ~180s hold after a rescue before the next climb/shave - a rescue means the lower voltage genuinely failed, not noise, so prove real stability before retesting that same edge
 #define RETREAT_COOLDOWN_CHECKS 3            // ~30s cooldown between frequency retreats - lets each step actually prove itself instead of cascading down every poll
 #define OVERTEMP_COOLDOWN_CHECKS 12           // ~120s cooldown after an overtemp-triggered reduction - thermal mass takes longer to actually settle than a voltage/power reading does
 #define UNSTABLE_CONFIRM_CHECKS 2             // require 2 consecutive unstable readings before reacting - filters a single noisy blip
@@ -308,7 +308,7 @@ void autotune_task(void *pvParameters)
                 ESP_LOGI(TAG, "Unstable (%.1fC) - rescuing voltage %umV -> %umV", temp, core_voltage, new_voltage);
                 nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, new_voltage);
                 at->rescue_attempts++;
-                at->backoff_remaining = BACKOFF_CHECKS_AFTER_ACTION;
+                at->backoff_remaining = RESCUE_COOLDOWN_CHECKS;
                 at->state = AUTOTUNE_STATE_RESCUING;
                 at->last_step_mv = (int16_t)(new_voltage - core_voltage);
                 mark_action_time(at);
