@@ -18,6 +18,7 @@
 #define STABLE_CHECKS_BEFORE_ACTION 6       // ~60s of stability before climbing freq or shaving voltage
 #define BACKOFF_CHECKS_AFTER_ACTION 6        // ~60s cooldown after a climb, shave, or rescue before the next one
 #define RETREAT_COOLDOWN_CHECKS 3            // ~30s cooldown between frequency retreats - lets each step actually prove itself instead of cascading down every poll
+#define OVERTEMP_COOLDOWN_CHECKS 12           // ~120s cooldown after an overtemp-triggered reduction - thermal mass takes longer to actually settle than a voltage/power reading does
 #define UNSTABLE_CONFIRM_CHECKS 2             // require 2 consecutive unstable readings before reacting - filters a single noisy blip
 #define MAX_CONSECUTIVE_RESCUES 3
 
@@ -122,13 +123,14 @@ static bool any_domain_underperforming(GlobalState * GLOBAL_STATE)
     return false;
 }
 
-static bool read_is_unstable(GlobalState * GLOBAL_STATE, float * out_temp)
+static bool read_is_unstable(GlobalState * GLOBAL_STATE, float * out_temp, bool * out_overtemp)
 {
     PowerManagementModule * pm = &GLOBAL_STATE->POWER_MANAGEMENT_MODULE;
     SystemModule * sys = &GLOBAL_STATE->SYSTEM_MODULE;
 
     float temp = pm->chip_temp_avg > pm->chip_temp2_avg ? pm->chip_temp_avg : pm->chip_temp2_avg;
     *out_temp = temp;
+    *out_overtemp = false;
 
     // In Performance mode, the user's own temp ceiling (if set) IS the real
     // limit - not just a soft "stop climbing" marker. Otherwise a custom
@@ -143,6 +145,7 @@ static bool read_is_unstable(GlobalState * GLOBAL_STATE, float * out_temp)
     }
 
     if (temp > temp_limit) {
+        *out_overtemp = true;
         return true;
     }
 
@@ -225,17 +228,20 @@ void autotune_task(void *pvParameters)
         bool over_power_limit = max_power_limit > 0.0f && current_power > max_power_limit;
 
         float temp = 0.0f;
-        bool unstable = read_is_unstable(GLOBAL_STATE, &temp);
+        bool overtemp = false;
+        bool unstable = read_is_unstable(GLOBAL_STATE, &temp, &overtemp);
 
-        if (over_power_limit) {
+        if (over_power_limit || overtemp) {
             // Distinct from the general instability path on purpose: instability
             // there means "needs more voltage", which would only make an
-            // over-power situation worse. This always reduces - voltage first,
-            // then frequency - and never rescues, paced by its own cooldown so
-            // the always-on hard safety net in power_management_task rarely
-            // needs to step in on top of this.
+            // over-power or overtemp situation worse. This always reduces -
+            // voltage first, then frequency - and never rescues. Overtemp gets
+            // a longer cooldown than a plain power/retreat step: thermal mass
+            // takes real time to actually settle, so climbing right back up
+            // after 30s just retriggers the same cycle.
             at->stable_checks = 0;
             at->unstable_checks = 0;
+            int cooldown = overtemp ? OVERTEMP_COOLDOWN_CHECKS : RETREAT_COOLDOWN_CHECKS;
 
             if (at->backoff_remaining > 0) {
                 at->backoff_remaining--;
@@ -244,10 +250,15 @@ void autotune_task(void *pvParameters)
                 uint16_t step = (overclock_enabled && core_voltage > voltage_table_max(asic)) ? OVERCLOCK_VOLTAGE_STEP_MV : VENDOR_VOLTAGE_STEP_MV;
                 uint16_t new_voltage = (core_voltage > vendor_min_mv + step) ? core_voltage - step : vendor_min_mv;
 
-                ESP_LOGI(TAG, "Over power limit (%.1fW > %.1fW) - reducing voltage %umV -> %umV",
-                         current_power, max_power_limit, core_voltage, new_voltage);
+                if (overtemp) {
+                    ESP_LOGI(TAG, "Overtemp (%.1fC) - reducing voltage %umV -> %umV, cooling down for %ds",
+                             temp, core_voltage, new_voltage, cooldown * (POLL_RATE_MS / 1000));
+                } else {
+                    ESP_LOGI(TAG, "Over power limit (%.1fW > %.1fW) - reducing voltage %umV -> %umV",
+                             current_power, max_power_limit, core_voltage, new_voltage);
+                }
                 nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, new_voltage);
-                at->backoff_remaining = RETREAT_COOLDOWN_CHECKS;
+                at->backoff_remaining = cooldown;
                 at->state = AUTOTUNE_STATE_SHAVING;
                 at->last_step_mv = (int16_t)(new_voltage - core_voltage);
                 mark_action_time(at);
@@ -257,17 +268,26 @@ void autotune_task(void *pvParameters)
                     new_frequency = floor_freq_mhz;
                 }
 
-                ESP_LOGI(TAG, "Over power limit (%.1fW > %.1fW) at voltage floor - reducing frequency %g -> %g MHz",
-                         current_power, max_power_limit, core_frequency, new_frequency);
+                if (overtemp) {
+                    ESP_LOGI(TAG, "Overtemp (%.1fC) at voltage floor - reducing frequency %g -> %g MHz, cooling down for %ds",
+                             temp, core_frequency, new_frequency, cooldown * (POLL_RATE_MS / 1000));
+                } else {
+                    ESP_LOGI(TAG, "Over power limit (%.1fW > %.1fW) at voltage floor - reducing frequency %g -> %g MHz",
+                             current_power, max_power_limit, core_frequency, new_frequency);
+                }
                 nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, new_frequency);
-                at->backoff_remaining = RETREAT_COOLDOWN_CHECKS;
+                at->backoff_remaining = cooldown;
                 at->state = AUTOTUNE_STATE_RETREATING;
                 at->last_step_mhz = (int16_t)(new_frequency - core_frequency);
                 mark_action_time(at);
             } else {
                 at->state = AUTOTUNE_STATE_HELD;
-                ESP_LOGW(TAG, "Over power limit (%.1fW > %.1fW) but already at voltage and frequency floor - cannot reduce further",
-                         current_power, max_power_limit);
+                if (overtemp) {
+                    ESP_LOGW(TAG, "Overtemp (%.1fC) but already at voltage and frequency floor - cannot reduce further", temp);
+                } else {
+                    ESP_LOGW(TAG, "Over power limit (%.1fW > %.1fW) but already at voltage and frequency floor - cannot reduce further",
+                             current_power, max_power_limit);
+                }
             }
         } else if (unstable) {
             at->stable_checks = 0;
