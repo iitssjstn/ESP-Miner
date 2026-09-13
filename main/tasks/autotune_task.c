@@ -21,10 +21,11 @@
 #define MAX_CONSECUTIVE_RESCUES 3
 
 #define VENDOR_VOLTAGE_STEP_MV 25
-#define OVERCLOCK_VOLTAGE_STEP_MV 10
+#define OVERCLOCK_VOLTAGE_STEP_MV 5
 #define OVERCLOCK_VOLTAGE_HEADROOM_MV 150 // soft ceiling above vendor max when custom settings are unlocked
 
-#define FREQUENCY_STEP_MHZ 10.0f
+#define VENDOR_FREQUENCY_STEP_MHZ 10.0f
+#define OVERCLOCK_FREQUENCY_STEP_MHZ 5.0f
 #define ECO_EFFICIENCY_TOLERANCE 0.98f // allow 2% noise before treating a climb as an efficiency regression
 
 static const char * TAG = "autotune";
@@ -50,6 +51,15 @@ static uint16_t frequency_table_max(const AsicConfig * asic)
         max = asic->frequency_options[i];
     }
     return max;
+}
+
+// Finer 5MHz steps once climbing beyond the vendor table (same idea as the
+// voltage step split below): precise adjustments matter more when you're
+// already outside the tested/validated range.
+static float frequency_step(const AsicConfig * asic, float current_frequency, bool overclock_enabled)
+{
+    return (overclock_enabled && current_frequency >= (float) frequency_table_max(asic))
+           ? OVERCLOCK_FREQUENCY_STEP_MHZ : VENDOR_FREQUENCY_STEP_MHZ;
 }
 
 // Effective ceilings: a user-set value (>0) wins, otherwise fall back to the
@@ -217,7 +227,7 @@ void autotune_task(void *pvParameters)
             } else if (core_frequency > floor_freq_mhz) {
                 // Voltage is maxed out or we've exhausted rescue attempts at this
                 // frequency - back off frequency instead of holding indefinitely.
-                float new_frequency = core_frequency - FREQUENCY_STEP_MHZ;
+                float new_frequency = core_frequency - frequency_step(asic, core_frequency, overclock_enabled);
                 if (new_frequency < floor_freq_mhz) {
                     new_frequency = floor_freq_mhz;
                 }
@@ -263,7 +273,7 @@ void autotune_task(void *pvParameters)
                     // Eco mode: the last climb step made hash/watt worse - that step
                     // wasn't worth it. Undo it and lock in the previous point as the
                     // efficiency peak; from here on only shave voltage.
-                    float new_frequency = core_frequency - FREQUENCY_STEP_MHZ;
+                    float new_frequency = core_frequency - frequency_step(asic, core_frequency, overclock_enabled);
                     if (new_frequency < floor_freq_mhz) {
                         new_frequency = floor_freq_mhz;
                     }
@@ -275,7 +285,7 @@ void autotune_task(void *pvParameters)
                     at->last_step_mhz = (int16_t)(new_frequency - core_frequency);
                     mark_action_time(at);
                 } else if (climbing_allowed && core_frequency < max_frequency) {
-                    float new_frequency = core_frequency + FREQUENCY_STEP_MHZ;
+                    float new_frequency = core_frequency + frequency_step(asic, core_frequency, overclock_enabled);
                     if (new_frequency > max_frequency) {
                         new_frequency = max_frequency;
                     }
