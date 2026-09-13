@@ -156,6 +156,7 @@ const mockSystemInfo: ISystemInfo = {
   autotunePerformanceMode: 0,
   autotuneMaxVoltage: 0,
   autotuneMaxFrequency: 0,
+  autotuneMaxTemp: 0,
   autotune: {
     state: 'stable' as const,
     stableChecks: 4,

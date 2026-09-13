@@ -273,6 +273,7 @@ components:
         - autotunePerformanceMode
         - autotuneMaxVoltage
         - autotuneMaxFrequency
+        - autotuneMaxTemp
         - autotune
         - primaryPoolIndex
         - secondaryPoolIndex
@@ -510,6 +511,9 @@ components:
         autotuneMaxFrequency:
           type: number
           description: User ceiling for autotune's ASIC frequency in MHz (0=use vendor limit automatically)
+        autotuneMaxTemp:
+          type: number
+          description: Chip temperature ceiling in °C that stops autotune from climbing further in Performance mode (0=disabled, reactive-only)
         useCustomWWW:
           type: integer
           description: Whether to serve files from the SPIFFS www partition instead of the embedded Web UI (0=embedded, 1=custom/SPIFFS)
@@ -1053,6 +1057,13 @@ components:
           type: number
           description: User ceiling for autotune's ASIC frequency in MHz (0=use vendor limit automatically)
           minimum: 0
+          examples:
+            - 0
+        autotuneMaxTemp:
+          type: number
+          description: Chip temperature ceiling in °C that stops autotune from climbing further in Performance mode (0=disabled, reactive-only)
+          minimum: 0
+          maximum: 100
           examples:
             - 0
         useCustomWWW:

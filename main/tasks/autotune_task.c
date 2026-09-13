@@ -275,7 +275,10 @@ void autotune_task(void *pvParameters)
                                       && efficiency < at->last_efficiency_ghs_w * ECO_EFFICIENCY_TOLERANCE
                                       && core_frequency > floor_freq_mhz;
 
-                bool climbing_allowed = performance_mode || !at->eco_peak_found;
+                float max_temp_c = nvs_config_get_float(NVS_CONFIG_AUTOTUNE_MAX_TEMP);
+                bool temp_ceiling_reached = performance_mode && max_temp_c > 0.0f && temp >= max_temp_c;
+
+                bool climbing_allowed = performance_mode ? !temp_ceiling_reached : !at->eco_peak_found;
 
                 if (eco_regressed) {
                     // Eco mode: the last climb step made hash/watt worse - that step
@@ -305,13 +308,19 @@ void autotune_task(void *pvParameters)
                     at->last_step_mhz = (int16_t)(new_frequency - core_frequency);
                     mark_action_time(at);
                 } else {
-                    // At the frequency ceiling (Performance) or at the efficiency peak
-                    // (Eco) - safe to shave voltage down for efficiency.
+                    // Climbing has stopped: at the frequency ceiling, at the Eco
+                    // efficiency peak, or (Performance mode) at the user's temp
+                    // ceiling - safe to shave voltage down for efficiency.
                     uint16_t step = (overclock_enabled && core_voltage > voltage_table_max(asic)) ? OVERCLOCK_VOLTAGE_STEP_MV : VENDOR_VOLTAGE_STEP_MV;
                     uint16_t new_voltage = (core_voltage > vendor_min_mv + step) ? core_voltage - step : vendor_min_mv;
 
                     if (new_voltage < core_voltage) {
-                        ESP_LOGI(TAG, "Stable, no more climbing - shaving voltage %umV -> %umV", core_voltage, new_voltage);
+                        if (temp_ceiling_reached) {
+                            ESP_LOGI(TAG, "Stable but at temp ceiling (%.1fC >= %.1fC) - shaving voltage %umV -> %umV instead of climbing",
+                                     temp, max_temp_c, core_voltage, new_voltage);
+                        } else {
+                            ESP_LOGI(TAG, "Stable, no more climbing - shaving voltage %umV -> %umV", core_voltage, new_voltage);
+                        }
                         nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, new_voltage);
                         at->state = AUTOTUNE_STATE_SHAVING;
                         at->last_step_mv = (int16_t)(new_voltage - core_voltage);

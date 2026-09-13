@@ -79,6 +79,17 @@
             <app-checkbox name="autotunePerformanceMode" formControlName="autotunePerformanceMode" inputId="autotunePerformanceMode" [binary]="true"></app-checkbox>
           </div>
         </div>
+        @if (form.controls['autotunePerformanceMode'].value) {
+          <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
+            <label for="autotuneMaxTemp" class="w-full md:w-2/12 font-medium cursor-pointer select-none"
+              appTooltip="In Performance mode, autotune stops climbing frequency once the chip reaches this temperature, instead of waiting for real instability. Leave at 0 to disable and rely on stability alone.">
+              Autotune Max Temp
+            </label>
+            <div class="w-full md:w-10/12">
+              <input class="input-text" id="autotuneMaxTemp" formControlName="autotuneMaxTemp" type="number" min="0" max="100" placeholder="0 = disabled" />
+            </div>
+          </div>
+        }
         <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
           <label for="autotuneMaxFrequency" class="w-full md:w-2/12 font-medium cursor-pointer select-none"
             appTooltip="Autotune will not climb the frequency above this value. Leave at 0 to use the vendor limit automatically.">
