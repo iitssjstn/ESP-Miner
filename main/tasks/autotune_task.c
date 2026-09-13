@@ -4,6 +4,7 @@
 #include "freertos/task.h"
 #include "global_state.h"
 #include "nvs_config.h"
+#include "asic.h"
 #include "autotune_task.h"
 
 // Deliberately independent from power_management_task's hardware throttle
@@ -11,11 +12,12 @@
 // well before the hardware safety cutoff ever gets involved.
 #define POLL_RATE_MS 10000
 #define AUTOTUNE_TEMP_LIMIT_C 68.0f
-#define HASHRATE_SHORTFALL_LIMIT 0.05f  // >5% below expected counts as unstable
-#define ERROR_RATE_LIMIT_PCT 2.0f       // >2% ASIC error rate counts as unstable
+#define HASHRATE_SHORTFALL_LIMIT 0.05f     // >5% below expected total counts as unstable
+#define DOMAIN_SHORTFALL_LIMIT 0.50f       // a single hash domain running below 50% of its expected share counts as unstable
+#define ERROR_RATE_LIMIT_PCT 2.0f          // >2% ASIC error rate counts as unstable
 
-#define STABLE_CHECKS_BEFORE_ACTION 6   // ~60s of stability before climbing freq or shaving voltage
-#define BACKOFF_CHECKS_AFTER_ACTION 6   // ~60s cooldown after any corrective step before the next one
+#define STABLE_CHECKS_BEFORE_ACTION 6       // ~60s of stability before climbing freq or shaving voltage
+#define BACKOFF_CHECKS_AFTER_ACTION 6        // ~60s cooldown after any corrective step before the next one
 #define MAX_CONSECUTIVE_RESCUES 3
 
 #define VENDOR_VOLTAGE_STEP_MV 25
@@ -23,6 +25,7 @@
 #define OVERCLOCK_VOLTAGE_HEADROOM_MV 150 // soft ceiling above vendor max when custom settings are unlocked
 
 #define FREQUENCY_STEP_MHZ 10.0f
+#define ECO_EFFICIENCY_TOLERANCE 0.98f // allow 2% noise before treating a climb as an efficiency regression
 
 static const char * TAG = "autotune";
 
@@ -76,6 +79,37 @@ static float effective_max_frequency(const AsicConfig * asic, bool overclock_ena
     return overclock_enabled ? user_max : (user_max < vendor_max ? user_max : vendor_max);
 }
 
+// Checks every individual hash domain against its expected share of the total
+// hashrate. Catches a single degraded/failing domain that an aggregate-only
+// check could mask (e.g. 3 healthy domains hiding one dead one on a 4-domain ASIC).
+static bool any_domain_underperforming(GlobalState * GLOBAL_STATE)
+{
+    PowerManagementModule * pm = &GLOBAL_STATE->POWER_MANAGEMENT_MODULE;
+    int asic_count = GLOBAL_STATE->DEVICE_CONFIG.family.asic_count;
+    int hash_domains = GLOBAL_STATE->DEVICE_CONFIG.family.asic.hash_domains;
+
+    if (hash_domains <= 1 || pm->expected_hashrate <= 0.0f) {
+        return false; // nothing to compare per-domain on single-domain ASICs
+    }
+
+    float expected_per_domain = pm->expected_hashrate / (float)(asic_count * hash_domains);
+
+    for (int asic_nr = 0; asic_nr < asic_count; asic_nr++) {
+        for (int domain_nr = 0; domain_nr < hash_domains; domain_nr++) {
+            asic_domain_measurement_t measurement = {0};
+            if (ASIC_get_domain_measurement(GLOBAL_STATE, asic_nr, domain_nr, &measurement) != ESP_OK) {
+                continue;
+            }
+            if (measurement.hashrate < expected_per_domain * DOMAIN_SHORTFALL_LIMIT) {
+                ESP_LOGW(TAG, "ASIC %d domain %d underperforming: %.2f Gh/s (expected ~%.2f)",
+                         asic_nr, domain_nr, measurement.hashrate, expected_per_domain);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 static bool read_is_unstable(GlobalState * GLOBAL_STATE, float * out_temp)
 {
     PowerManagementModule * pm = &GLOBAL_STATE->POWER_MANAGEMENT_MODULE;
@@ -96,6 +130,10 @@ static bool read_is_unstable(GlobalState * GLOBAL_STATE, float * out_temp)
     }
 
     if (sys->error_percentage > ERROR_RATE_LIMIT_PCT) {
+        return true;
+    }
+
+    if (any_domain_underperforming(GLOBAL_STATE)) {
         return true;
     }
 
@@ -123,6 +161,8 @@ void autotune_task(void *pvParameters)
     at->last_step_mv = 0;
     at->last_step_mhz = 0;
     at->last_action_time_s = 0;
+    at->last_efficiency_ghs_w = 0.0f;
+    at->eco_peak_found = false;
     bool rescue_limit_warned = false;
 
     ESP_LOGI(TAG, "Starting (voltage floor %umV, frequency floor %g MHz)", vendor_min_mv, floor_freq_mhz);
@@ -136,6 +176,8 @@ void autotune_task(void *pvParameters)
             at->stable_checks = 0;
             at->backoff_remaining = 0;
             at->rescue_attempts = 0;
+            at->eco_peak_found = false;
+            at->last_efficiency_ghs_w = 0.0f;
             rescue_limit_warned = false;
             continue;
         }
@@ -145,6 +187,7 @@ void autotune_task(void *pvParameters)
         }
 
         bool overclock_enabled = nvs_config_get_bool(NVS_CONFIG_OVERCLOCK_ENABLED);
+        bool performance_mode = nvs_config_get_bool(NVS_CONFIG_AUTOTUNE_PROFILE);
         uint16_t core_voltage = nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE);
         float core_frequency = nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY);
 
@@ -205,7 +248,33 @@ void autotune_task(void *pvParameters)
             if (at->backoff_remaining > 0) {
                 at->backoff_remaining--;
             } else if (at->stable_checks >= STABLE_CHECKS_BEFORE_ACTION) {
-                if (core_frequency < max_frequency) {
+                PowerManagementModule * pm = &GLOBAL_STATE->POWER_MANAGEMENT_MODULE;
+                SystemModule * sys = &GLOBAL_STATE->SYSTEM_MODULE;
+                float efficiency = (pm->power > 0.0f) ? sys->current_hashrate / pm->power : 0.0f;
+
+                bool eco_regressed = !performance_mode && at->eco_peak_found == false
+                                      && at->last_efficiency_ghs_w > 0.0f
+                                      && efficiency < at->last_efficiency_ghs_w * ECO_EFFICIENCY_TOLERANCE
+                                      && core_frequency > floor_freq_mhz;
+
+                bool climbing_allowed = performance_mode || !at->eco_peak_found;
+
+                if (eco_regressed) {
+                    // Eco mode: the last climb step made hash/watt worse - that step
+                    // wasn't worth it. Undo it and lock in the previous point as the
+                    // efficiency peak; from here on only shave voltage.
+                    float new_frequency = core_frequency - FREQUENCY_STEP_MHZ;
+                    if (new_frequency < floor_freq_mhz) {
+                        new_frequency = floor_freq_mhz;
+                    }
+                    ESP_LOGI(TAG, "Eco: climb regressed efficiency (%.3f -> %.3f Gh/s/W) - reverting to %g MHz and locking peak",
+                             at->last_efficiency_ghs_w, efficiency, new_frequency);
+                    nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, new_frequency);
+                    at->eco_peak_found = true;
+                    at->state = AUTOTUNE_STATE_RETREATING;
+                    at->last_step_mhz = (int16_t)(new_frequency - core_frequency);
+                    mark_action_time(at);
+                } else if (climbing_allowed && core_frequency < max_frequency) {
                     float new_frequency = core_frequency + FREQUENCY_STEP_MHZ;
                     if (new_frequency > max_frequency) {
                         new_frequency = max_frequency;
@@ -213,16 +282,18 @@ void autotune_task(void *pvParameters)
 
                     ESP_LOGI(TAG, "Stable - climbing frequency %g -> %g MHz", core_frequency, new_frequency);
                     nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, new_frequency);
+                    at->last_efficiency_ghs_w = efficiency; // baseline to judge this climb against next time
                     at->state = AUTOTUNE_STATE_CLIMBING;
                     at->last_step_mhz = (int16_t)(new_frequency - core_frequency);
                     mark_action_time(at);
                 } else {
-                    // Already at the frequency ceiling - safe to shave voltage for efficiency.
+                    // At the frequency ceiling (Performance) or at the efficiency peak
+                    // (Eco) - safe to shave voltage down for efficiency.
                     uint16_t step = (overclock_enabled && core_voltage > voltage_table_max(asic)) ? OVERCLOCK_VOLTAGE_STEP_MV : VENDOR_VOLTAGE_STEP_MV;
                     uint16_t new_voltage = (core_voltage > vendor_min_mv + step) ? core_voltage - step : vendor_min_mv;
 
                     if (new_voltage < core_voltage) {
-                        ESP_LOGI(TAG, "Stable at frequency ceiling - shaving voltage %umV -> %umV", core_voltage, new_voltage);
+                        ESP_LOGI(TAG, "Stable, no more climbing - shaving voltage %umV -> %umV", core_voltage, new_voltage);
                         nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, new_voltage);
                         at->state = AUTOTUNE_STATE_SHAVING;
                         at->last_step_mv = (int16_t)(new_voltage - core_voltage);

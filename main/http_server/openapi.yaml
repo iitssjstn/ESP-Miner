@@ -269,6 +269,7 @@ components:
         - overheat_mode
         - overclockEnabled
         - autotuneEnabled
+        - autotunePerformanceMode
         - autotuneMaxVoltage
         - autotuneMaxFrequency
         - autotune
@@ -496,6 +497,9 @@ components:
         autotuneEnabled:
           type: integer
           description: Automatic voltage tuning based on ASIC stability (0=off, 1=on)
+        autotunePerformanceMode:
+          type: integer
+          description: Autotune profile - climbs frequency to the ceiling regardless of efficiency when true (Performance); stops at the local hash/watt peak when false (Eco)
         autotuneMaxVoltage:
           type: integer
           description: User ceiling for autotune's core voltage in mV (0=use vendor limit automatically)
@@ -705,6 +709,7 @@ components:
             - backoffRemaining
             - lastStepMv
             - lastStepMhz
+            - ecoPeakFound
             - lastActionTimeS
           properties:
             state:
@@ -726,6 +731,9 @@ components:
             lastStepMhz:
               type: integer
               description: Size and direction of the last frequency step (positive=climb, negative=retreat)
+            ecoPeakFound:
+              type: boolean
+              description: Eco profile only - true once climbing has found and locked the local hash/watt peak
             lastActionTimeS:
               type: integer
               description: Seconds since boot when the last step was made (0=never)
@@ -1022,6 +1030,12 @@ components:
         autotuneEnabled:
           type: integer
           description: Automatic voltage tuning based on ASIC stability (0=disabled, 1=enabled)
+          enum: [0,1]
+          examples:
+            - 0
+        autotunePerformanceMode:
+          type: integer
+          description: Autotune profile - climbs frequency to the ceiling regardless of efficiency when 1 (Performance); stops at the local hash/watt peak when 0 (Eco)
           enum: [0,1]
           examples:
             - 0

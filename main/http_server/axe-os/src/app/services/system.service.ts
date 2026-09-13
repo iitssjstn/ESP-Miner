@@ -220,6 +220,7 @@ export class SystemApiService {
         miningPaused: false,
         workReceived: 42,
         autotuneEnabled: 1,
+        autotunePerformanceMode: 0,
         autotuneMaxVoltage: 0,
         autotuneMaxFrequency: 0,
         autotune: {
@@ -229,6 +230,7 @@ export class SystemApiService {
           backoffRemaining: 0,
           lastStepMv: -25,
           lastStepMhz: 10,
+          ecoPeakFound: false,
           lastActionTimeS: 180,
         },
       }

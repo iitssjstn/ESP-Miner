@@ -152,6 +152,7 @@ const mockSystemInfo: ISystemInfo = {
   isUsingFallbackStratum: 0,
   useFallbackStratum: 0,
   autotuneEnabled: 1,
+  autotunePerformanceMode: 0,
   autotuneMaxVoltage: 0,
   autotuneMaxFrequency: 0,
   autotune: {
@@ -161,6 +162,7 @@ const mockSystemInfo: ISystemInfo = {
     backoffRemaining: 0,
     lastStepMv: -25,
     lastStepMhz: 10,
+    ecoPeakFound: false,
     lastActionTimeS: 180,
   },
 };

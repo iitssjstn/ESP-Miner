@@ -62,6 +62,15 @@
       </div>
       @if (form.controls['autotuneEnabled'].value) {
         <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
+          <label for="autotunePerformanceMode" class="w-full md:w-2/12 font-medium cursor-pointer select-none"
+            appTooltip="Off (Eco): climbs frequency only while it keeps improving hash/watt, then holds at that peak. On (Performance): keeps climbing all the way to the frequency ceiling regardless of efficiency.">
+            Performance Mode
+          </label>
+          <div class="w-full md:w-10/12 flex items-center">
+            <app-checkbox name="autotunePerformanceMode" formControlName="autotunePerformanceMode" inputId="autotunePerformanceMode" [binary]="true"></app-checkbox>
+          </div>
+        </div>
+        <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
           <label for="autotuneMaxFrequency" class="w-full md:w-2/12 font-medium cursor-pointer select-none"
             appTooltip="Autotune will not climb the frequency above this value. Leave at 0 to use the vendor limit automatically.">
             Autotune Max Frequency
