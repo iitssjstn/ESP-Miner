@@ -52,6 +52,15 @@
         </div>
       }
       <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
+        <label for="maxPowerLimit" class="w-full md:w-2/12 font-medium cursor-pointer select-none"
+          appTooltip="Hard power ceiling in watts, always enforced regardless of autotune. Reduces voltage, then frequency, whenever measured power goes over this. Leave at 0 to disable.">
+          Max Power Limit
+        </label>
+        <div class="w-full md:w-10/12">
+          <input class="input-text" id="maxPowerLimit" formControlName="maxPowerLimit" type="number" min="0" placeholder="0 = disabled" />
+        </div>
+      </div>
+      <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
         <label for="autotuneEnabled" class="w-full md:w-2/12 font-medium cursor-pointer select-none"
           appTooltip="Automatically climbs frequency and adjusts core voltage while the ASIC is stable, and backs off when it isn't - within the ceilings below (0 = automatic vendor limit).">
           Autotune

@@ -185,6 +185,7 @@ export class SystemApiService {
         fanspeed: 50,
         manualFanSpeed: 70,
         temptarget: 60,
+        maxPowerLimit: 0,
         statsFrequency: 30,
         fanrpm: 3583,
         fan2rpm: 4146,

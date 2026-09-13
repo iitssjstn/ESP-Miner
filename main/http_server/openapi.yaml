@@ -241,6 +241,7 @@ components:
         - fan2rpm
         - fanspeed
         - temptarget
+        - maxPowerLimit
         - rotation
         - cpuUsage
         - freeHeap
@@ -401,6 +402,9 @@ components:
         temptarget:
           type: number
           description: Target Temperature for the PID Controller
+        maxPowerLimit:
+          type: number
+          description: Hard power ceiling in watts enforced by power management, independent of autotune (0=disabled)
         responseTime:
           type: number
           description: Pool response time in ms
@@ -1083,6 +1087,12 @@ components:
           maximum: 100
           examples:
             - 66
+        maxPowerLimit:
+          type: number
+          description: Hard power ceiling in watts enforced by power management, independent of autotune (0=disabled)
+          minimum: 0
+          examples:
+            - 0
         displayTimeout:
           type: integer
           description: Set display timeout time in minutes (-1=display on, 0=display off)

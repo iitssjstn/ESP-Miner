@@ -26,6 +26,10 @@
 
 #define ASIC_REDUCTION 100.0
 
+#define POWER_LIMIT_CHECK_INTERVAL_LOOPS 20 // ~2s at the 100ms poll rate
+#define POWER_LIMIT_VOLTAGE_STEP_MV 25
+#define POWER_LIMIT_FREQUENCY_STEP_MHZ 10.0f
+
 static const char * TAG = "power_management";
 
 static void mining_stop(GlobalState * GLOBAL_STATE)
@@ -124,6 +128,7 @@ void POWER_MANAGEMENT_task(void * pvParameters)
     uint16_t last_known_asic_voltage = 0;
     float last_known_asic_frequency = 0.0;
     bool is_paused = false;
+    int power_limit_check_counter = 0;
 
     while (1) {
         if (GLOBAL_STATE->SELF_TEST_MODULE.is_finished) {
@@ -222,6 +227,41 @@ void POWER_MANAGEMENT_task(void * pvParameters)
                 // Frequency reduction will now be applied by normal power management loop
                 nvs_config_set_bool(NVS_CONFIG_OVERHEAT_MODE, false);
                 ESP_LOGI(TAG, "Resuming normal operation. Reduced frequency (%.0f MHz) will be applied automatically.", reduced_asic_frequency);
+            }
+        }
+
+        // Hard power cap - independent of autotune, always active (like overheat
+        // protection). Reactive only: it never climbs back up on its own, it just
+        // holds power under the user's ceiling. Rate limited to every ~2s so it
+        // doesn't fight with autotune's own (slower, 10s-cadence) adjustments.
+        power_limit_check_counter++;
+        if (!GLOBAL_STATE->SELF_TEST_MODULE.is_active && power_limit_check_counter >= POWER_LIMIT_CHECK_INTERVAL_LOOPS) {
+            power_limit_check_counter = 0;
+
+            float max_power_limit = nvs_config_get_float(NVS_CONFIG_MAX_POWER_LIMIT);
+            if (max_power_limit > 0.0f && power_management->power > max_power_limit) {
+                uint16_t voltage_floor_mv = GLOBAL_STATE->DEVICE_CONFIG.family.asic.voltage_options[0];
+                float frequency_floor_mhz = GLOBAL_STATE->DEVICE_CONFIG.family.asic.default_frequency_mhz;
+
+                uint16_t current_voltage = nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE);
+                float current_frequency = nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY);
+
+                if (current_voltage > voltage_floor_mv) {
+                    uint16_t reduced_voltage = (current_voltage > voltage_floor_mv + POWER_LIMIT_VOLTAGE_STEP_MV)
+                                                ? current_voltage - POWER_LIMIT_VOLTAGE_STEP_MV : voltage_floor_mv;
+                    ESP_LOGW(TAG, "Power limit exceeded (%.1fW > %.1fW) - reducing voltage %umV -> %umV",
+                             power_management->power, max_power_limit, current_voltage, reduced_voltage);
+                    nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, reduced_voltage);
+                } else if (current_frequency > frequency_floor_mhz) {
+                    float reduced_frequency = (current_frequency > frequency_floor_mhz + POWER_LIMIT_FREQUENCY_STEP_MHZ)
+                                               ? current_frequency - POWER_LIMIT_FREQUENCY_STEP_MHZ : frequency_floor_mhz;
+                    ESP_LOGW(TAG, "Power limit exceeded (%.1fW > %.1fW) at voltage floor - reducing frequency %g -> %g MHz",
+                             power_management->power, max_power_limit, current_frequency, reduced_frequency);
+                    nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, reduced_frequency);
+                } else {
+                    ESP_LOGW(TAG, "Power limit exceeded (%.1fW > %.1fW) but already at voltage and frequency floor - cannot reduce further",
+                             power_management->power, max_power_limit);
+                }
             }
         }
 

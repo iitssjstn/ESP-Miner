@@ -79,6 +79,7 @@ const mockSystemInfo: ISystemInfo = {
   fallbackStratumSuggestedDifficulty: 1000,
   fallbackStratumTLS: false,
   temptarget: 60,
+  maxPowerLimit: 0,
   useCustomWWW: 0,
   useNTP: false,
   power_fault: '',

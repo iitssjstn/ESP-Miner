@@ -190,6 +190,7 @@ export class EditComponent implements OnInit, OnDestroy, OnChanges {
           minFanSpeed: [info.minFanSpeed, [Validators.required]],
           manualFanSpeed: [info.manualFanSpeed, [Validators.required]],
           temptarget: [info.temptarget, [Validators.required]],
+          maxPowerLimit: [info.maxPowerLimit, [Validators.min(0)]],
           overheat_mode: [info.overheat_mode, [Validators.required]],
           statsFrequency: [info.statsFrequency, [
             Validators.required,
@@ -392,6 +393,7 @@ export class EditComponent implements OnInit, OnDestroy, OnChanges {
       'minFanSpeed',
       'manualFanSpeed',
       'temptarget',
+      'maxPowerLimit',
       'overheat_mode',
       'statsFrequency'
     ];
