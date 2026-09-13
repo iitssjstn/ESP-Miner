@@ -133,13 +133,13 @@ static bool read_is_unstable(GlobalState * GLOBAL_STATE, float * out_temp)
         return true;
     }
 
-    if (pm->expected_hashrate > 0.0f) {
-        float shortfall = (pm->expected_hashrate - sys->current_hashrate) / pm->expected_hashrate;
-        if (shortfall > HASHRATE_SHORTFALL_LIMIT) {
-            return true;
-        }
-    }
-
+    // Deliberately not using instantaneous current_hashrate vs expected here:
+    // it's noisy enough (job-timing variance) that it can flag "unstable" on
+    // pure noise even at 0% hash error, which stalls climbing indefinitely.
+    // The ASIC-reported error rate below is a much cleaner, direct signal of
+    // real instability, and the per-domain check below still catches a fully
+    // dead domain that error rate alone wouldn't (no errors from a domain
+    // producing nothing).
     if (sys->error_percentage > ERROR_RATE_LIMIT_PCT) {
         return true;
     }
