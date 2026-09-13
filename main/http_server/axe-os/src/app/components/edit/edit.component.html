@@ -53,13 +53,33 @@
       }
       <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
         <label for="autotuneEnabled" class="w-full md:w-2/12 font-medium cursor-pointer select-none"
-          appTooltip="Automatically adjusts core voltage up when the ASIC is unstable, and shaves it back down when stable, within the safe range for this board.">
+          appTooltip="Automatically climbs frequency and adjusts core voltage while the ASIC is stable, and backs off when it isn't - within the ceilings below (0 = automatic vendor limit).">
           Autotune
         </label>
         <div class="w-full md:w-10/12 flex items-center">
           <app-checkbox name="autotuneEnabled" formControlName="autotuneEnabled" inputId="autotuneEnabled" [binary]="true"></app-checkbox>
         </div>
       </div>
+      @if (form.controls['autotuneEnabled'].value) {
+        <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
+          <label for="autotuneMaxFrequency" class="w-full md:w-2/12 font-medium cursor-pointer select-none"
+            appTooltip="Autotune will not climb the frequency above this value. Leave at 0 to use the vendor limit automatically.">
+            Autotune Max Frequency
+          </label>
+          <div class="w-full md:w-10/12">
+            <input class="input-text" id="autotuneMaxFrequency" formControlName="autotuneMaxFrequency" type="number" min="0" placeholder="0 = automatic" />
+          </div>
+        </div>
+        <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
+          <label for="autotuneMaxVoltage" class="w-full md:w-2/12 font-medium cursor-pointer select-none"
+            appTooltip="Autotune will not raise the core voltage above this value. Leave at 0 to use the vendor limit automatically.">
+            Autotune Max Voltage
+          </label>
+          <div class="w-full md:w-10/12">
+            <input class="input-text" id="autotuneMaxVoltage" formControlName="autotuneMaxVoltage" type="number" min="0" placeholder="0 = automatic" />
+          </div>
+        </div>
+      }
       <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
         <label for="autofanspeed" class="w-full md:w-2/12 font-medium cursor-pointer select-none">Automatic Fan Control</label>
         <div class="w-full md:w-10/12 flex items-center">

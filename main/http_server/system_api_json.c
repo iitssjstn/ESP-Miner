@@ -222,6 +222,8 @@ static void system_api_add_config(cJSON *root, GlobalState *g) {
     cJSON_AddNumberToObject(root, "useCustomWWW", nvs_config_get_bool(NVS_CONFIG_USE_CUSTOM_WWW) ? 1 : 0);
     cJSON_AddNumberToObject(root, "overclockEnabled", nvs_config_get_bool(NVS_CONFIG_OVERCLOCK_ENABLED) ? 1 : 0);
     cJSON_AddNumberToObject(root, "autotuneEnabled", nvs_config_get_bool(NVS_CONFIG_AUTOTUNE_ENABLED) ? 1 : 0);
+    cJSON_AddNumberToObject(root, "autotuneMaxVoltage", nvs_config_get_u16(NVS_CONFIG_AUTOTUNE_MAX_VOLTAGE));
+    cJSON_AddFloatToObject(root, "autotuneMaxFrequency", nvs_config_get_float(NVS_CONFIG_AUTOTUNE_MAX_FREQUENCY));
     char *disp_name = nvs_config_get_string(NVS_CONFIG_DISPLAY);
     cJSON_AddStringToObject(root, "display", disp_name ? disp_name : "");
     free(disp_name);
@@ -269,11 +271,13 @@ static void system_api_add_hashrate_monitor(cJSON *root, GlobalState *g) {
 
 static const char * autotune_state_str(AutotuneState state) {
     switch (state) {
-        case AUTOTUNE_STATE_STABLE:   return "stable";
-        case AUTOTUNE_STATE_RESCUING: return "rescuing";
-        case AUTOTUNE_STATE_SHAVING:  return "shaving";
-        case AUTOTUNE_STATE_HELD:     return "held";
-        default:                      return "idle";
+        case AUTOTUNE_STATE_STABLE:      return "stable";
+        case AUTOTUNE_STATE_CLIMBING:    return "climbing";
+        case AUTOTUNE_STATE_RESCUING:    return "rescuing";
+        case AUTOTUNE_STATE_RETREATING:  return "retreating";
+        case AUTOTUNE_STATE_SHAVING:     return "shaving";
+        case AUTOTUNE_STATE_HELD:        return "held";
+        default:                         return "idle";
     }
 }
 
@@ -290,6 +294,7 @@ static void system_api_add_autotune(cJSON *root, GlobalState *g) {
     cJSON_AddNumberToObject(autotune, "rescueAttempts", at->rescue_attempts);
     cJSON_AddNumberToObject(autotune, "backoffRemaining", at->backoff_remaining);
     cJSON_AddNumberToObject(autotune, "lastStepMv", at->last_step_mv);
+    cJSON_AddNumberToObject(autotune, "lastStepMhz", at->last_step_mhz);
     cJSON_AddNumberToObject(autotune, "lastActionTimeS", at->last_action_time_s);
 }
 

@@ -14,13 +14,15 @@
 #define HASHRATE_SHORTFALL_LIMIT 0.05f  // >5% below expected counts as unstable
 #define ERROR_RATE_LIMIT_PCT 2.0f       // >2% ASIC error rate counts as unstable
 
-#define STABLE_CHECKS_BEFORE_SHAVE 6    // ~60s of stability before trying to shave voltage
-#define BACKOFF_CHECKS_AFTER_RESCUE 6   // ~60s cooldown after a rescue before shaving resumes
+#define STABLE_CHECKS_BEFORE_ACTION 6   // ~60s of stability before climbing freq or shaving voltage
+#define BACKOFF_CHECKS_AFTER_ACTION 6   // ~60s cooldown after any corrective step before the next one
 #define MAX_CONSECUTIVE_RESCUES 3
 
-#define VENDOR_STEP_MV 25
-#define OVERCLOCK_STEP_MV 10
-#define OVERCLOCK_HEADROOM_MV 150       // soft ceiling above vendor max when custom settings are unlocked
+#define VENDOR_VOLTAGE_STEP_MV 25
+#define OVERCLOCK_VOLTAGE_STEP_MV 10
+#define OVERCLOCK_VOLTAGE_HEADROOM_MV 150 // soft ceiling above vendor max when custom settings are unlocked
+
+#define FREQUENCY_STEP_MHZ 10.0f
 
 static const char * TAG = "autotune";
 
@@ -36,6 +38,42 @@ static uint16_t voltage_table_max(const AsicConfig * asic)
         max = asic->voltage_options[i];
     }
     return max;
+}
+
+static uint16_t frequency_table_max(const AsicConfig * asic)
+{
+    uint16_t max = asic->frequency_options[0];
+    for (int i = 0; asic->frequency_options[i] != 0; i++) {
+        max = asic->frequency_options[i];
+    }
+    return max;
+}
+
+// Effective ceilings: a user-set value (>0) wins, otherwise fall back to the
+// vendor table max. A user value beyond the vendor table only applies when
+// Custom Settings (overclock) is unlocked - same "understand the risks" gate
+// used everywhere else in the settings UI.
+static uint16_t effective_max_voltage(const AsicConfig * asic, bool overclock_enabled)
+{
+    uint16_t vendor_max = voltage_table_max(asic);
+    uint16_t base_ceiling = overclock_enabled ? (vendor_max + OVERCLOCK_VOLTAGE_HEADROOM_MV) : vendor_max;
+    uint16_t user_max = nvs_config_get_u16(NVS_CONFIG_AUTOTUNE_MAX_VOLTAGE);
+
+    if (user_max == 0) {
+        return base_ceiling;
+    }
+    return overclock_enabled ? user_max : (user_max < vendor_max ? user_max : vendor_max);
+}
+
+static float effective_max_frequency(const AsicConfig * asic, bool overclock_enabled)
+{
+    float vendor_max = (float) frequency_table_max(asic);
+    float user_max = nvs_config_get_float(NVS_CONFIG_AUTOTUNE_MAX_FREQUENCY);
+
+    if (user_max <= 0.0f) {
+        return vendor_max;
+    }
+    return overclock_enabled ? user_max : (user_max < vendor_max ? user_max : vendor_max);
 }
 
 static bool read_is_unstable(GlobalState * GLOBAL_STATE, float * out_temp)
@@ -75,18 +113,19 @@ void autotune_task(void *pvParameters)
     AutotuneModule * at = &GLOBAL_STATE->AUTOTUNE_MODULE;
     const AsicConfig * asic = &GLOBAL_STATE->DEVICE_CONFIG.family.asic;
 
-    uint16_t vendor_min = voltage_table_min(asic);
-    uint16_t vendor_max = voltage_table_max(asic);
+    uint16_t vendor_min_mv = voltage_table_min(asic);
+    float floor_freq_mhz = asic->default_frequency_mhz;
 
     at->state = AUTOTUNE_STATE_IDLE;
     at->stable_checks = 0;
     at->backoff_remaining = 0;
     at->rescue_attempts = 0;
     at->last_step_mv = 0;
+    at->last_step_mhz = 0;
     at->last_action_time_s = 0;
     bool rescue_limit_warned = false;
 
-    ESP_LOGI(TAG, "Starting (vendor range %u-%umV)", vendor_min, vendor_max);
+    ESP_LOGI(TAG, "Starting (voltage floor %umV, frequency floor %g MHz)", vendor_min_mv, floor_freq_mhz);
 
     TickType_t taskWakeTime = xTaskGetTickCount();
     while (1) {
@@ -107,6 +146,10 @@ void autotune_task(void *pvParameters)
 
         bool overclock_enabled = nvs_config_get_bool(NVS_CONFIG_OVERCLOCK_ENABLED);
         uint16_t core_voltage = nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE);
+        float core_frequency = nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY);
+
+        uint16_t max_voltage = effective_max_voltage(asic, overclock_enabled);
+        float max_frequency = effective_max_frequency(asic, overclock_enabled);
 
         float temp = 0.0f;
         bool unstable = read_is_unstable(GLOBAL_STATE, &temp);
@@ -114,35 +157,44 @@ void autotune_task(void *pvParameters)
         if (unstable) {
             at->stable_checks = 0;
 
-            if (at->rescue_attempts >= MAX_CONSECUTIVE_RESCUES) {
-                at->state = AUTOTUNE_STATE_HELD;
-                if (!rescue_limit_warned) {
-                    ESP_LOGW(TAG, "Hit max consecutive rescue attempts (%d) at %umV, %.1fC - holding, needs manual attention",
-                             MAX_CONSECUTIVE_RESCUES, core_voltage, temp);
-                    rescue_limit_warned = true;
+            if (at->rescue_attempts < MAX_CONSECUTIVE_RESCUES && core_voltage < max_voltage) {
+                uint16_t step = (overclock_enabled && core_voltage >= voltage_table_max(asic)) ? OVERCLOCK_VOLTAGE_STEP_MV : VENDOR_VOLTAGE_STEP_MV;
+                uint16_t new_voltage = core_voltage + step;
+                if (new_voltage > max_voltage) {
+                    new_voltage = max_voltage;
                 }
-                continue;
-            }
 
-            uint16_t step = (overclock_enabled && core_voltage >= vendor_max) ? OVERCLOCK_STEP_MV : VENDOR_STEP_MV;
-            uint16_t ceiling = overclock_enabled ? (vendor_max + OVERCLOCK_HEADROOM_MV) : vendor_max;
-            uint16_t new_voltage = core_voltage + step;
-            if (new_voltage > ceiling) {
-                new_voltage = ceiling;
-            }
-
-            if (new_voltage > core_voltage) {
-                ESP_LOGI(TAG, "Unstable (%.1fC, hashrate/error out of tolerance) - rescuing voltage %umV -> %umV",
-                         temp, core_voltage, new_voltage);
+                ESP_LOGI(TAG, "Unstable (%.1fC) - rescuing voltage %umV -> %umV", temp, core_voltage, new_voltage);
                 nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, new_voltage);
                 at->rescue_attempts++;
-                at->backoff_remaining = BACKOFF_CHECKS_AFTER_RESCUE;
+                at->backoff_remaining = BACKOFF_CHECKS_AFTER_ACTION;
                 at->state = AUTOTUNE_STATE_RESCUING;
                 at->last_step_mv = (int16_t)(new_voltage - core_voltage);
                 mark_action_time(at);
+            } else if (core_frequency > floor_freq_mhz) {
+                // Voltage is maxed out or we've exhausted rescue attempts at this
+                // frequency - back off frequency instead of holding indefinitely.
+                float new_frequency = core_frequency - FREQUENCY_STEP_MHZ;
+                if (new_frequency < floor_freq_mhz) {
+                    new_frequency = floor_freq_mhz;
+                }
+
+                ESP_LOGI(TAG, "Unstable at voltage ceiling (%umV) - retreating frequency %g -> %g MHz",
+                         core_voltage, core_frequency, new_frequency);
+                nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, new_frequency);
+                at->rescue_attempts = 0;
+                rescue_limit_warned = false;
+                at->backoff_remaining = BACKOFF_CHECKS_AFTER_ACTION;
+                at->state = AUTOTUNE_STATE_RETREATING;
+                at->last_step_mhz = (int16_t)(new_frequency - core_frequency);
+                mark_action_time(at);
             } else {
                 at->state = AUTOTUNE_STATE_HELD;
-                ESP_LOGW(TAG, "Unstable at %umV but already at ceiling (%umV) - holding", core_voltage, ceiling);
+                if (!rescue_limit_warned) {
+                    ESP_LOGW(TAG, "Unstable at voltage ceiling (%umV) and frequency floor (%g MHz) - holding, needs manual attention",
+                             core_voltage, core_frequency);
+                    rescue_limit_warned = true;
+                }
             }
         } else {
             at->rescue_attempts = 0;
@@ -152,17 +204,30 @@ void autotune_task(void *pvParameters)
 
             if (at->backoff_remaining > 0) {
                 at->backoff_remaining--;
-            } else if (at->stable_checks >= STABLE_CHECKS_BEFORE_SHAVE) {
-                uint16_t step = (overclock_enabled && core_voltage > vendor_max) ? OVERCLOCK_STEP_MV : VENDOR_STEP_MV;
-                uint16_t new_voltage = (core_voltage > vendor_min + step) ? core_voltage - step : vendor_min;
+            } else if (at->stable_checks >= STABLE_CHECKS_BEFORE_ACTION) {
+                if (core_frequency < max_frequency) {
+                    float new_frequency = core_frequency + FREQUENCY_STEP_MHZ;
+                    if (new_frequency > max_frequency) {
+                        new_frequency = max_frequency;
+                    }
 
-                if (new_voltage < core_voltage) {
-                    ESP_LOGI(TAG, "Stable for %ds - shaving voltage %umV -> %umV",
-                             STABLE_CHECKS_BEFORE_SHAVE * (POLL_RATE_MS / 1000), core_voltage, new_voltage);
-                    nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, new_voltage);
-                    at->state = AUTOTUNE_STATE_SHAVING;
-                    at->last_step_mv = (int16_t)(new_voltage - core_voltage);
+                    ESP_LOGI(TAG, "Stable - climbing frequency %g -> %g MHz", core_frequency, new_frequency);
+                    nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, new_frequency);
+                    at->state = AUTOTUNE_STATE_CLIMBING;
+                    at->last_step_mhz = (int16_t)(new_frequency - core_frequency);
                     mark_action_time(at);
+                } else {
+                    // Already at the frequency ceiling - safe to shave voltage for efficiency.
+                    uint16_t step = (overclock_enabled && core_voltage > voltage_table_max(asic)) ? OVERCLOCK_VOLTAGE_STEP_MV : VENDOR_VOLTAGE_STEP_MV;
+                    uint16_t new_voltage = (core_voltage > vendor_min_mv + step) ? core_voltage - step : vendor_min_mv;
+
+                    if (new_voltage < core_voltage) {
+                        ESP_LOGI(TAG, "Stable at frequency ceiling - shaving voltage %umV -> %umV", core_voltage, new_voltage);
+                        nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, new_voltage);
+                        at->state = AUTOTUNE_STATE_SHAVING;
+                        at->last_step_mv = (int16_t)(new_voltage - core_voltage);
+                        mark_action_time(at);
+                    }
                 }
                 at->stable_checks = 0;
             }

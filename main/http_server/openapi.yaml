@@ -269,6 +269,8 @@ components:
         - overheat_mode
         - overclockEnabled
         - autotuneEnabled
+        - autotuneMaxVoltage
+        - autotuneMaxFrequency
         - autotune
         - primaryPoolIndex
         - secondaryPoolIndex
@@ -494,6 +496,12 @@ components:
         autotuneEnabled:
           type: integer
           description: Automatic voltage tuning based on ASIC stability (0=off, 1=on)
+        autotuneMaxVoltage:
+          type: integer
+          description: User ceiling for autotune's core voltage in mV (0=use vendor limit automatically)
+        autotuneMaxFrequency:
+          type: number
+          description: User ceiling for autotune's ASIC frequency in MHz (0=use vendor limit automatically)
         useCustomWWW:
           type: integer
           description: Whether to serve files from the SPIFFS www partition instead of the embedded Web UI (0=embedded, 1=custom/SPIFFS)
@@ -696,27 +704,31 @@ components:
             - rescueAttempts
             - backoffRemaining
             - lastStepMv
+            - lastStepMhz
             - lastActionTimeS
           properties:
             state:
               type: string
               description: Current autotune state
-              enum: [idle, stable, rescuing, shaving, held]
+              enum: [idle, stable, climbing, rescuing, retreating, shaving, held]
             stableChecks:
               type: integer
-              description: Consecutive stable checks since the last rescue or shave
+              description: Consecutive stable checks since the last corrective action
             rescueAttempts:
               type: integer
               description: Consecutive voltage rescue attempts since the last stable reading
             backoffRemaining:
               type: integer
-              description: Checks remaining in the post-rescue cooldown before shaving may resume
+              description: Checks remaining in the post-action cooldown before the next climb or shave
             lastStepMv:
               type: integer
               description: Size and direction of the last voltage step (positive=rescue, negative=shave)
+            lastStepMhz:
+              type: integer
+              description: Size and direction of the last frequency step (positive=climb, negative=retreat)
             lastActionTimeS:
               type: integer
-              description: Seconds since boot when the last voltage step was made (0=never)
+              description: Seconds since boot when the last step was made (0=never)
         miningPaused:
           type: boolean
           description: Whether mining is currently paused
@@ -1011,6 +1023,18 @@ components:
           type: integer
           description: Automatic voltage tuning based on ASIC stability (0=disabled, 1=enabled)
           enum: [0,1]
+          examples:
+            - 0
+        autotuneMaxVoltage:
+          type: integer
+          description: User ceiling for autotune's core voltage in mV (0=use vendor limit automatically)
+          minimum: 0
+          examples:
+            - 0
+        autotuneMaxFrequency:
+          type: number
+          description: User ceiling for autotune's ASIC frequency in MHz (0=use vendor limit automatically)
+          minimum: 0
           examples:
             - 0
         useCustomWWW:

@@ -155,7 +155,9 @@ typedef struct AsicTaskModule
 typedef enum {
     AUTOTUNE_STATE_IDLE = 0,
     AUTOTUNE_STATE_STABLE,
+    AUTOTUNE_STATE_CLIMBING,
     AUTOTUNE_STATE_RESCUING,
+    AUTOTUNE_STATE_RETREATING,
     AUTOTUNE_STATE_SHAVING,
     AUTOTUNE_STATE_HELD,
 } AutotuneState;
@@ -166,7 +168,8 @@ typedef struct
     int stable_checks;
     int rescue_attempts;
     int backoff_remaining;
-    int16_t last_step_mv; // signed: positive = rescue step, negative = shave step
+    int16_t last_step_mv;      // signed: positive = voltage rescue, negative = voltage shave
+    int16_t last_step_mhz;     // signed: positive = frequency climb, negative = frequency retreat
     uint32_t last_action_time_s; // seconds since boot, 0 = never
 } AutotuneModule;
 
