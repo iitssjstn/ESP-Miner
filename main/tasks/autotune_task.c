@@ -19,6 +19,7 @@
 #define STABLE_CHECKS_BEFORE_ACTION 6       // ~60s of stability before climbing freq or shaving voltage
 #define BACKOFF_CHECKS_AFTER_ACTION 6        // ~60s cooldown after a climb, shave, or rescue before the next one
 #define RETREAT_COOLDOWN_CHECKS 3            // ~30s cooldown between frequency retreats - lets each step actually prove itself instead of cascading down every poll
+#define UNSTABLE_CONFIRM_CHECKS 2             // require 2 consecutive unstable readings before reacting - filters a single noisy blip
 #define MAX_CONSECUTIVE_RESCUES 3
 
 #define VENDOR_VOLTAGE_STEP_MV 25
@@ -167,6 +168,7 @@ void autotune_task(void *pvParameters)
 
     at->state = AUTOTUNE_STATE_IDLE;
     at->stable_checks = 0;
+    at->unstable_checks = 0;
     at->backoff_remaining = 0;
     at->rescue_attempts = 0;
     at->last_step_mv = 0;
@@ -185,6 +187,7 @@ void autotune_task(void *pvParameters)
         if (!nvs_config_get_bool(NVS_CONFIG_AUTOTUNE_ENABLED)) {
             at->state = AUTOTUNE_STATE_IDLE;
             at->stable_checks = 0;
+            at->unstable_checks = 0;
             at->backoff_remaining = 0;
             at->rescue_attempts = 0;
             at->eco_peak_found = false;
@@ -210,8 +213,14 @@ void autotune_task(void *pvParameters)
 
         if (unstable) {
             at->stable_checks = 0;
+            at->unstable_checks++;
 
-            if (at->rescue_attempts < MAX_CONSECUTIVE_RESCUES && core_voltage < max_voltage) {
+            if (at->unstable_checks < UNSTABLE_CONFIRM_CHECKS) {
+                // Single noisy reading - wait for it to repeat before reacting.
+                // Leave state as-is so the UI doesn't flicker on a one-off blip.
+                ESP_LOGI(TAG, "Unstable reading (%d/%d) - waiting for confirmation before reacting",
+                         at->unstable_checks, UNSTABLE_CONFIRM_CHECKS);
+            } else if (at->rescue_attempts < MAX_CONSECUTIVE_RESCUES && core_voltage < max_voltage) {
                 uint16_t step = (overclock_enabled && core_voltage >= voltage_table_max(asic)) ? OVERCLOCK_VOLTAGE_STEP_MV : VENDOR_VOLTAGE_STEP_MV;
                 uint16_t new_voltage = core_voltage + step;
                 if (new_voltage > max_voltage) {
@@ -259,6 +268,7 @@ void autotune_task(void *pvParameters)
             }
         } else {
             at->rescue_attempts = 0;
+            at->unstable_checks = 0;
             rescue_limit_warned = false;
             at->stable_checks++;
             at->state = AUTOTUNE_STATE_STABLE;

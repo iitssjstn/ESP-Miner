@@ -713,6 +713,7 @@ components:
           required:
             - state
             - stableChecks
+            - unstableChecks
             - rescueAttempts
             - backoffRemaining
             - lastStepMv
@@ -727,6 +728,9 @@ components:
             stableChecks:
               type: integer
               description: Consecutive stable checks since the last corrective action
+            unstableChecks:
+              type: integer
+              description: Consecutive unstable readings so far - only acts once this reaches the confirmation threshold, filtering single noisy blips
             rescueAttempts:
               type: integer
               description: Consecutive voltage rescue attempts since the last stable reading

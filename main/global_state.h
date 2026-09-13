@@ -166,6 +166,7 @@ typedef struct
 {
     AutotuneState state;
     int stable_checks;
+    int unstable_checks;
     int rescue_attempts;
     int backoff_remaining;
     int16_t last_step_mv;      // signed: positive = voltage rescue, negative = voltage shave

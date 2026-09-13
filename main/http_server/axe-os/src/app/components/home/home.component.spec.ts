@@ -160,6 +160,7 @@ const mockSystemInfo: ISystemInfo = {
   autotune: {
     state: 'stable' as const,
     stableChecks: 4,
+    unstableChecks: 0,
     rescueAttempts: 0,
     backoffRemaining: 0,
     lastStepMv: -25,

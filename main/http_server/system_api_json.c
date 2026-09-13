@@ -294,6 +294,7 @@ static void system_api_add_autotune(cJSON *root, GlobalState *g) {
 
     cJSON_AddStringToObject(autotune, "state", autotune_state_str(at->state));
     cJSON_AddNumberToObject(autotune, "stableChecks", at->stable_checks);
+    cJSON_AddNumberToObject(autotune, "unstableChecks", at->unstable_checks);
     cJSON_AddNumberToObject(autotune, "rescueAttempts", at->rescue_attempts);
     cJSON_AddNumberToObject(autotune, "backoffRemaining", at->backoff_remaining);
     cJSON_AddNumberToObject(autotune, "lastStepMv", at->last_step_mv);
