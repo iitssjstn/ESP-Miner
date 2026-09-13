@@ -28,6 +28,7 @@
 #define VENDOR_FREQUENCY_STEP_MHZ 10.0f
 #define OVERCLOCK_FREQUENCY_STEP_MHZ 5.0f
 #define ECO_EFFICIENCY_TOLERANCE 0.98f // allow 2% noise before treating a climb as an efficiency regression
+#define PROACTIVE_POWER_MARGIN 0.95f // stop climbing at 95% of the global power limit, before the cap is actually hit
 
 static const char * TAG = "autotune";
 
@@ -219,10 +220,56 @@ void autotune_task(void *pvParameters)
         uint16_t max_voltage = effective_max_voltage(asic, overclock_enabled);
         float max_frequency = effective_max_frequency(asic, overclock_enabled);
 
+        float current_power = GLOBAL_STATE->POWER_MANAGEMENT_MODULE.power;
+        float max_power_limit = nvs_config_get_float(NVS_CONFIG_MAX_POWER_LIMIT);
+        bool over_power_limit = max_power_limit > 0.0f && current_power > max_power_limit;
+
         float temp = 0.0f;
         bool unstable = read_is_unstable(GLOBAL_STATE, &temp);
 
-        if (unstable) {
+        if (over_power_limit) {
+            // Distinct from the general instability path on purpose: instability
+            // there means "needs more voltage", which would only make an
+            // over-power situation worse. This always reduces - voltage first,
+            // then frequency - and never rescues, paced by its own cooldown so
+            // the always-on hard safety net in power_management_task rarely
+            // needs to step in on top of this.
+            at->stable_checks = 0;
+            at->unstable_checks = 0;
+
+            if (at->backoff_remaining > 0) {
+                at->backoff_remaining--;
+                at->state = AUTOTUNE_STATE_HELD;
+            } else if (core_voltage > vendor_min_mv) {
+                uint16_t step = (overclock_enabled && core_voltage > voltage_table_max(asic)) ? OVERCLOCK_VOLTAGE_STEP_MV : VENDOR_VOLTAGE_STEP_MV;
+                uint16_t new_voltage = (core_voltage > vendor_min_mv + step) ? core_voltage - step : vendor_min_mv;
+
+                ESP_LOGI(TAG, "Over power limit (%.1fW > %.1fW) - reducing voltage %umV -> %umV",
+                         current_power, max_power_limit, core_voltage, new_voltage);
+                nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, new_voltage);
+                at->backoff_remaining = RETREAT_COOLDOWN_CHECKS;
+                at->state = AUTOTUNE_STATE_SHAVING;
+                at->last_step_mv = (int16_t)(new_voltage - core_voltage);
+                mark_action_time(at);
+            } else if (core_frequency > floor_freq_mhz) {
+                float new_frequency = core_frequency - frequency_step(asic, core_frequency, overclock_enabled);
+                if (new_frequency < floor_freq_mhz) {
+                    new_frequency = floor_freq_mhz;
+                }
+
+                ESP_LOGI(TAG, "Over power limit (%.1fW > %.1fW) at voltage floor - reducing frequency %g -> %g MHz",
+                         current_power, max_power_limit, core_frequency, new_frequency);
+                nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, new_frequency);
+                at->backoff_remaining = RETREAT_COOLDOWN_CHECKS;
+                at->state = AUTOTUNE_STATE_RETREATING;
+                at->last_step_mhz = (int16_t)(new_frequency - core_frequency);
+                mark_action_time(at);
+            } else {
+                at->state = AUTOTUNE_STATE_HELD;
+                ESP_LOGW(TAG, "Over power limit (%.1fW > %.1fW) but already at voltage and frequency floor - cannot reduce further",
+                         current_power, max_power_limit);
+            }
+        } else if (unstable) {
             at->stable_checks = 0;
             at->unstable_checks++;
 
@@ -298,8 +345,9 @@ void autotune_task(void *pvParameters)
 
                 float max_temp_c = nvs_config_get_float(NVS_CONFIG_AUTOTUNE_MAX_TEMP);
                 bool temp_ceiling_reached = performance_mode && max_temp_c > 0.0f && temp >= max_temp_c;
+                bool power_ceiling_near = max_power_limit > 0.0f && current_power >= max_power_limit * PROACTIVE_POWER_MARGIN;
 
-                bool climbing_allowed = performance_mode ? !temp_ceiling_reached : !at->eco_peak_found;
+                bool climbing_allowed = (performance_mode ? !temp_ceiling_reached : !at->eco_peak_found) && !power_ceiling_near;
 
                 if (eco_regressed) {
                     // Eco mode: the last climb step made hash/watt worse - that step
@@ -336,7 +384,10 @@ void autotune_task(void *pvParameters)
                     uint16_t new_voltage = (core_voltage > vendor_min_mv + step) ? core_voltage - step : vendor_min_mv;
 
                     if (new_voltage < core_voltage) {
-                        if (temp_ceiling_reached) {
+                        if (power_ceiling_near) {
+                            ESP_LOGI(TAG, "Stable but near power limit (%.1fW >= %.1fW) - shaving voltage %umV -> %umV instead of climbing",
+                                     current_power, max_power_limit * PROACTIVE_POWER_MARGIN, core_voltage, new_voltage);
+                        } else if (temp_ceiling_reached) {
                             ESP_LOGI(TAG, "Stable but at temp ceiling (%.1fC >= %.1fC) - shaving voltage %umV -> %umV instead of climbing",
                                      temp, max_temp_c, core_voltage, new_voltage);
                         } else {
