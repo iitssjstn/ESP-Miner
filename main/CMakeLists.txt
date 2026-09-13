@@ -44,6 +44,7 @@ SRCS
     "./tasks/asic_result_task.c"
     "./tasks/power_management_task.c"
     "./tasks/statistics_task.c"
+    "./tasks/autotune_task.c"
     "./tasks/scoreboard.c"
     "./tasks/hashrate_monitor_task.c"
     "./tasks/fan_controller_task.c"
