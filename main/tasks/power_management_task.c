@@ -118,6 +118,25 @@ void POWER_MANAGEMENT_task(void * pvParameters)
     PowerManagementModule * power_management = &GLOBAL_STATE->POWER_MANAGEMENT_MODULE;
     SystemModule * sys_module = &GLOBAL_STATE->SYSTEM_MODULE;
 
+    // Boot safety net: always start from the vendor-safe defaults, no matter
+    // why the device restarted (crash, panic, brownout, watchdog, a manual
+    // restart, or an OTA reboot). Blindly re-applying whatever voltage or
+    // frequency was persisted before a reset would just recreate a boot loop
+    // if that value was the actual cause - with no way out short of
+    // reflashing. Autotune (if enabled) climbs back up from here on its own;
+    // a manual custom setting has to be re-entered, which is a small price
+    // for guaranteeing the device always comes back up on its own.
+    uint16_t default_voltage_mv = GLOBAL_STATE->DEVICE_CONFIG.family.asic.default_voltage_mv;
+    float default_frequency_mhz = GLOBAL_STATE->DEVICE_CONFIG.family.asic.default_frequency_mhz;
+    if (nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE) != default_voltage_mv) {
+        nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, default_voltage_mv);
+    }
+    if (nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY) != default_frequency_mhz) {
+        nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, default_frequency_mhz);
+    }
+    ESP_LOGI(TAG, "Boot safety: reset ASIC voltage/frequency to vendor defaults (%umV, %g MHz)",
+             default_voltage_mv, default_frequency_mhz);
+
     POWER_MANAGEMENT_init_frequency(GLOBAL_STATE);
     
     float last_asic_frequency = power_management->frequency_value;
