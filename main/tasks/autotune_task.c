@@ -23,7 +23,7 @@
 #define MAX_CONSECUTIVE_RESCUES 3
 
 #define VENDOR_VOLTAGE_STEP_MV 25
-#define OVERCLOCK_VOLTAGE_STEP_MV 5
+#define OVERCLOCK_VOLTAGE_STEP_MV 10
 #define OVERCLOCK_VOLTAGE_HEADROOM_MV 150 // soft ceiling above vendor max when custom settings are unlocked
 
 #define VENDOR_FREQUENCY_STEP_MHZ 10.0f
@@ -424,4 +424,3 @@ void autotune_task(void *pvParameters)
         }
     }
 }
-
