@@ -319,7 +319,13 @@ void autotune_task(void *pvParameters)
                 // Leave state as-is so the UI doesn't flicker on a one-off blip.
                 ESP_LOGI(TAG, "Unstable reading (%d/%d) - waiting for confirmation before reacting",
                          at->unstable_checks, UNSTABLE_CONFIRM_CHECKS);
-            } else if (at->rescue_attempts < MAX_CONSECUTIVE_RESCUES && core_voltage < max_voltage) {
+            } else if (at->rescue_attempts < MAX_CONSECUTIVE_RESCUES && core_voltage < max_voltage
+                       && !(max_power_limit > 0.0f && current_power >= max_power_limit * PROACTIVE_POWER_MARGIN)) {
+                // The power-limit check above matters: rescuing (raising voltage)
+                // while already near the power cap would just push power back up
+                // and undo the reason a prior shave brought voltage down in the
+                // first place - a real oscillation risk. Skip straight to
+                // frequency retreat in that case instead.
                 uint16_t step = voltage_step(asic, core_voltage, overclock_enabled, performance_mode);
                 uint16_t new_voltage = core_voltage + step;
                 if (new_voltage > max_voltage) {
