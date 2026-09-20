@@ -89,6 +89,24 @@
               <input class="input-text" id="autotuneMaxTemp" formControlName="autotuneMaxTemp" type="number" min="0" max="100" placeholder="0 = disabled" />
             </div>
           </div>
+          <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
+            <label for="autotuneVoltageStep" class="w-full md:w-2/12 font-medium cursor-pointer select-none"
+              appTooltip="Overrides the built-in voltage step size (25mV within the vendor table, 10mV beyond it) with your own fixed step, e.g. 2mV, for finer control. Leave at 0 to use the built-in steps.">
+              Autotune Voltage Step
+            </label>
+            <div class="w-full md:w-10/12">
+              <input class="input-text" id="autotuneVoltageStep" formControlName="autotuneVoltageStep" type="number" min="0" placeholder="0 = built-in" />
+            </div>
+          </div>
+          <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
+            <label for="autotuneFrequencyStep" class="w-full md:w-2/12 font-medium cursor-pointer select-none"
+              appTooltip="Overrides the built-in frequency step size (10MHz within the vendor table, 5MHz beyond it) with your own fixed step, e.g. 2MHz, for finer control. Leave at 0 to use the built-in steps.">
+              Autotune Frequency Step
+            </label>
+            <div class="w-full md:w-10/12">
+              <input class="input-text" id="autotuneFrequencyStep" formControlName="autotuneFrequencyStep" type="number" min="0" placeholder="0 = built-in" />
+            </div>
+          </div>
         }
         <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
           <label for="autotuneMaxFrequency" class="w-full md:w-2/12 font-medium cursor-pointer select-none"

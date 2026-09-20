@@ -58,11 +58,32 @@ static uint16_t frequency_table_max(const AsicConfig * asic)
 
 // Finer 5MHz steps once climbing beyond the vendor table (same idea as the
 // voltage step split below): precise adjustments matter more when you're
-// already outside the tested/validated range.
-static float frequency_step(const AsicConfig * asic, float current_frequency, bool overclock_enabled)
+// already outside the tested/validated range. In Performance mode, a user-set
+// custom step (>0) overrides both of these entirely - full manual control.
+static float frequency_step(const AsicConfig * asic, float current_frequency, bool overclock_enabled, bool performance_mode)
 {
+    if (performance_mode) {
+        float custom_step = nvs_config_get_float(NVS_CONFIG_AUTOTUNE_FREQUENCY_STEP);
+        if (custom_step > 0.0f) {
+            return custom_step;
+        }
+    }
     return (overclock_enabled && current_frequency >= (float) frequency_table_max(asic))
            ? OVERCLOCK_FREQUENCY_STEP_MHZ : VENDOR_FREQUENCY_STEP_MHZ;
+}
+
+// Same idea, for voltage: a user-set custom step (>0) in Performance mode
+// overrides the vendor/overclock split below entirely.
+static uint16_t voltage_step(const AsicConfig * asic, uint16_t current_voltage, bool overclock_enabled, bool performance_mode)
+{
+    if (performance_mode) {
+        uint16_t custom_step = nvs_config_get_u16(NVS_CONFIG_AUTOTUNE_VOLTAGE_STEP);
+        if (custom_step > 0) {
+            return custom_step;
+        }
+    }
+    return (overclock_enabled && current_voltage >= voltage_table_max(asic))
+           ? OVERCLOCK_VOLTAGE_STEP_MV : VENDOR_VOLTAGE_STEP_MV;
 }
 
 // Effective ceilings: a user-set value (>0) wins, otherwise fall back to the
@@ -247,7 +268,7 @@ void autotune_task(void *pvParameters)
                 at->backoff_remaining--;
                 at->state = AUTOTUNE_STATE_HELD;
             } else if (core_voltage > vendor_min_mv) {
-                uint16_t step = (overclock_enabled && core_voltage > voltage_table_max(asic)) ? OVERCLOCK_VOLTAGE_STEP_MV : VENDOR_VOLTAGE_STEP_MV;
+                uint16_t step = voltage_step(asic, core_voltage, overclock_enabled, performance_mode);
                 uint16_t new_voltage = (core_voltage > vendor_min_mv + step) ? core_voltage - step : vendor_min_mv;
 
                 if (overtemp) {
@@ -263,7 +284,7 @@ void autotune_task(void *pvParameters)
                 at->last_step_mv = (int16_t)(new_voltage - core_voltage);
                 mark_action_time(at);
             } else if (core_frequency > floor_freq_mhz) {
-                float new_frequency = core_frequency - frequency_step(asic, core_frequency, overclock_enabled);
+                float new_frequency = core_frequency - frequency_step(asic, core_frequency, overclock_enabled, performance_mode);
                 if (new_frequency < floor_freq_mhz) {
                     new_frequency = floor_freq_mhz;
                 }
@@ -299,7 +320,7 @@ void autotune_task(void *pvParameters)
                 ESP_LOGI(TAG, "Unstable reading (%d/%d) - waiting for confirmation before reacting",
                          at->unstable_checks, UNSTABLE_CONFIRM_CHECKS);
             } else if (at->rescue_attempts < MAX_CONSECUTIVE_RESCUES && core_voltage < max_voltage) {
-                uint16_t step = (overclock_enabled && core_voltage >= voltage_table_max(asic)) ? OVERCLOCK_VOLTAGE_STEP_MV : VENDOR_VOLTAGE_STEP_MV;
+                uint16_t step = voltage_step(asic, core_voltage, overclock_enabled, performance_mode);
                 uint16_t new_voltage = core_voltage + step;
                 if (new_voltage > max_voltage) {
                     new_voltage = max_voltage;
@@ -321,7 +342,7 @@ void autotune_task(void *pvParameters)
                     at->backoff_remaining--;
                     at->state = AUTOTUNE_STATE_HELD;
                 } else {
-                    float new_frequency = core_frequency - frequency_step(asic, core_frequency, overclock_enabled);
+                    float new_frequency = core_frequency - frequency_step(asic, core_frequency, overclock_enabled, performance_mode);
                     if (new_frequency < floor_freq_mhz) {
                         new_frequency = floor_freq_mhz;
                     }
@@ -373,7 +394,7 @@ void autotune_task(void *pvParameters)
                     // Eco mode: the last climb step made hash/watt worse - that step
                     // wasn't worth it. Undo it and lock in the previous point as the
                     // efficiency peak; from here on only shave voltage.
-                    float new_frequency = core_frequency - frequency_step(asic, core_frequency, overclock_enabled);
+                    float new_frequency = core_frequency - frequency_step(asic, core_frequency, overclock_enabled, performance_mode);
                     if (new_frequency < floor_freq_mhz) {
                         new_frequency = floor_freq_mhz;
                     }
@@ -385,7 +406,7 @@ void autotune_task(void *pvParameters)
                     at->last_step_mhz = (int16_t)(new_frequency - core_frequency);
                     mark_action_time(at);
                 } else if (climbing_allowed && core_frequency < max_frequency) {
-                    float new_frequency = core_frequency + frequency_step(asic, core_frequency, overclock_enabled);
+                    float new_frequency = core_frequency + frequency_step(asic, core_frequency, overclock_enabled, performance_mode);
                     if (new_frequency > max_frequency) {
                         new_frequency = max_frequency;
                     }
@@ -400,7 +421,7 @@ void autotune_task(void *pvParameters)
                     // Climbing has stopped: at the frequency ceiling, at the Eco
                     // efficiency peak, or (Performance mode) at the user's temp
                     // ceiling - safe to shave voltage down for efficiency.
-                    uint16_t step = (overclock_enabled && core_voltage > voltage_table_max(asic)) ? OVERCLOCK_VOLTAGE_STEP_MV : VENDOR_VOLTAGE_STEP_MV;
+                    uint16_t step = voltage_step(asic, core_voltage, overclock_enabled, performance_mode);
                     uint16_t new_voltage = (core_voltage > vendor_min_mv + step) ? core_voltage - step : vendor_min_mv;
 
                     if (new_voltage < core_voltage) {

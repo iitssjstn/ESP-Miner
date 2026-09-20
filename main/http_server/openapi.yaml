@@ -274,6 +274,8 @@ components:
         - autotuneMaxVoltage
         - autotuneMaxFrequency
         - autotuneMaxTemp
+        - autotuneVoltageStep
+        - autotuneFrequencyStep
         - autotune
         - primaryPoolIndex
         - secondaryPoolIndex
@@ -514,6 +516,12 @@ components:
         autotuneMaxTemp:
           type: number
           description: Chip temperature ceiling in °C that stops autotune from climbing further in Performance mode (0=disabled, reactive-only)
+        autotuneVoltageStep:
+          type: integer
+          description: User-set voltage step size in mV for autotune, Performance mode only (0=use built-in vendor/overclock step sizes)
+        autotuneFrequencyStep:
+          type: number
+          description: User-set frequency step size in MHz for autotune, Performance mode only (0=use built-in vendor/overclock step sizes)
         useCustomWWW:
           type: integer
           description: Whether to serve files from the SPIFFS www partition instead of the embedded Web UI (0=embedded, 1=custom/SPIFFS)
@@ -1068,6 +1076,18 @@ components:
           description: Chip temperature ceiling in °C that stops autotune from climbing further in Performance mode (0=disabled, reactive-only)
           minimum: 0
           maximum: 100
+          examples:
+            - 0
+        autotuneVoltageStep:
+          type: integer
+          description: User-set voltage step size in mV for autotune, Performance mode only (0=use built-in vendor/overclock step sizes)
+          minimum: 0
+          examples:
+            - 0
+        autotuneFrequencyStep:
+          type: number
+          description: User-set frequency step size in MHz for autotune, Performance mode only (0=use built-in vendor/overclock step sizes)
+          minimum: 0
           examples:
             - 0
         useCustomWWW:
