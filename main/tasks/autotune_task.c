@@ -10,16 +10,20 @@
 // Deliberately independent from power_management_task's hardware throttle
 // constants: this is a soft, conservative comfort limit that should trip
 // well before the hardware safety cutoff ever gets involved.
-#define POLL_RATE_MS 10000
+#define POLL_RATE_MS 2500
 #define AUTOTUNE_TEMP_LIMIT_C 68.0f
 #define DOMAIN_SHORTFALL_LIMIT 0.50f       // a single hash domain running below 50% of its expected share counts as unstable
 #define ERROR_RATE_LIMIT_PCT 2.0f          // >2% ASIC error rate counts as unstable
 
-#define STABLE_CHECKS_BEFORE_ACTION 6       // ~60s of stability before climbing freq or shaving voltage
-#define RESCUE_COOLDOWN_CHECKS 18             // ~180s hold after a rescue before the next climb/shave - a rescue means the lower voltage genuinely failed, not noise, so prove real stability before retesting that same edge
-#define RETREAT_COOLDOWN_CHECKS 3            // ~30s cooldown between frequency retreats - lets each step actually prove itself instead of cascading down every poll
-#define OVERTEMP_COOLDOWN_CHECKS 12           // ~120s cooldown after an overtemp-triggered reduction - thermal mass takes longer to actually settle than a voltage/power reading does
-#define UNSTABLE_CONFIRM_CHECKS 2             // require 2 consecutive unstable readings before reacting - filters a single noisy blip
+// Check-counts below are scaled to POLL_RATE_MS so the real-world durations
+// stay the same as before (poll rate went 10s -> 2.5s for faster settings
+// pickup, so counts went up 4x to compensate) - only the responsiveness to
+// settings changes improved, none of the actual safety timing changed.
+#define STABLE_CHECKS_BEFORE_ACTION 24       // ~60s of stability before climbing freq or shaving voltage
+#define RESCUE_COOLDOWN_CHECKS 72             // ~180s hold after a rescue before the next climb/shave - a rescue means the lower voltage genuinely failed, not noise, so prove real stability before retesting that same edge
+#define RETREAT_COOLDOWN_CHECKS 12            // ~30s cooldown between frequency retreats - lets each step actually prove itself instead of cascading down every poll
+#define OVERTEMP_COOLDOWN_CHECKS 48           // ~120s cooldown after an overtemp-triggered reduction - thermal mass takes longer to actually settle than a voltage/power reading does
+#define UNSTABLE_CONFIRM_CHECKS 8             // require 8 consecutive unstable readings (~20s) before reacting - filters a single noisy blip
 #define MAX_CONSECUTIVE_RESCUES 3
 
 #define VENDOR_VOLTAGE_STEP_MV 25
@@ -273,7 +277,7 @@ void autotune_task(void *pvParameters)
 
                 if (overtemp) {
                     ESP_LOGI(TAG, "Overtemp (%.1fC) - reducing voltage %umV -> %umV, cooling down for %ds",
-                             temp, core_voltage, new_voltage, cooldown * (POLL_RATE_MS / 1000));
+                             temp, core_voltage, new_voltage, cooldown * POLL_RATE_MS / 1000);
                 } else {
                     ESP_LOGI(TAG, "Over power limit (%.1fW > %.1fW) - reducing voltage %umV -> %umV",
                              current_power, max_power_limit, core_voltage, new_voltage);
@@ -291,7 +295,7 @@ void autotune_task(void *pvParameters)
 
                 if (overtemp) {
                     ESP_LOGI(TAG, "Overtemp (%.1fC) at voltage floor - reducing frequency %g -> %g MHz, cooling down for %ds",
-                             temp, core_frequency, new_frequency, cooldown * (POLL_RATE_MS / 1000));
+                             temp, core_frequency, new_frequency, cooldown * POLL_RATE_MS / 1000);
                 } else {
                     ESP_LOGI(TAG, "Over power limit (%.1fW > %.1fW) at voltage floor - reducing frequency %g -> %g MHz",
                              current_power, max_power_limit, core_frequency, new_frequency);
