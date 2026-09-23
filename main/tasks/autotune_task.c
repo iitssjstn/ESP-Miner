@@ -207,6 +207,7 @@ void autotune_task(void *pvParameters)
     float floor_freq_mhz = asic->default_frequency_mhz;
 
     at->state = AUTOTUNE_STATE_IDLE;
+    at->reason = "disabled";
     at->stable_checks = 0;
     at->unstable_checks = 0;
     at->backoff_remaining = 0;
@@ -226,6 +227,7 @@ void autotune_task(void *pvParameters)
 
         if (!nvs_config_get_bool(NVS_CONFIG_AUTOTUNE_ENABLED)) {
             at->state = AUTOTUNE_STATE_IDLE;
+            at->reason = "disabled";
             at->stable_checks = 0;
             at->unstable_checks = 0;
             at->backoff_remaining = 0;
@@ -255,6 +257,23 @@ void autotune_task(void *pvParameters)
         float temp = 0.0f;
         bool overtemp = false;
         bool unstable = read_is_unstable(GLOBAL_STATE, &temp, &overtemp);
+        float efficiency = (current_power > 0.0f) ? GLOBAL_STATE->SYSTEM_MODULE.current_hashrate / current_power : 0.0f;
+        at->temperature_c = temp;
+        at->power_w = current_power;
+        at->error_rate_pct = GLOBAL_STATE->SYSTEM_MODULE.error_percentage;
+        at->efficiency_ghs_w = efficiency;
+
+        if (overtemp) {
+            at->reason = "overtemp";
+        } else if (over_power_limit) {
+            at->reason = "power_limit";
+        } else if (unstable) {
+            at->reason = "unstable";
+        } else if (at->backoff_remaining > 0) {
+            at->reason = "cooldown";
+        } else {
+            at->reason = "seeking";
+        }
 
         if (over_power_limit || overtemp) {
             // Distinct from the general instability path on purpose: instability
@@ -387,7 +406,7 @@ void autotune_task(void *pvParameters)
             } else if (at->stable_checks >= STABLE_CHECKS_BEFORE_ACTION) {
                 PowerManagementModule * pm = &GLOBAL_STATE->POWER_MANAGEMENT_MODULE;
                 SystemModule * sys = &GLOBAL_STATE->SYSTEM_MODULE;
-                float efficiency = (pm->power > 0.0f) ? sys->current_hashrate / pm->power : 0.0f;
+                efficiency = (pm->power > 0.0f) ? sys->current_hashrate / pm->power : 0.0f;
 
                 bool eco_regressed = !performance_mode && at->eco_peak_found == false
                                       && at->last_efficiency_ghs_w > 0.0f

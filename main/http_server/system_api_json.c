@@ -295,6 +295,7 @@ static void system_api_add_autotune(cJSON *root, GlobalState *g) {
     cJSON_AddItemToObject(root, "autotune", autotune);
 
     cJSON_AddStringToObject(autotune, "state", autotune_state_str(at->state));
+    cJSON_AddStringToObject(autotune, "reason", at->reason ? at->reason : "unknown");
     cJSON_AddNumberToObject(autotune, "stableChecks", at->stable_checks);
     cJSON_AddNumberToObject(autotune, "unstableChecks", at->unstable_checks);
     cJSON_AddNumberToObject(autotune, "rescueAttempts", at->rescue_attempts);
@@ -303,6 +304,10 @@ static void system_api_add_autotune(cJSON *root, GlobalState *g) {
     cJSON_AddNumberToObject(autotune, "lastStepMhz", at->last_step_mhz);
     cJSON_AddBoolToObject(autotune, "ecoPeakFound", at->eco_peak_found);
     cJSON_AddNumberToObject(autotune, "lastActionTimeS", at->last_action_time_s);
+    cJSON_AddNumberToObject(autotune, "temperatureC", at->temperature_c);
+    cJSON_AddNumberToObject(autotune, "powerW", at->power_w);
+    cJSON_AddNumberToObject(autotune, "errorRatePct", at->error_rate_pct);
+    cJSON_AddNumberToObject(autotune, "efficiencyGhsW", at->efficiency_ghs_w);
 }
 
 static void system_api_add_rejected_reasons(cJSON *root, GlobalState *g) {

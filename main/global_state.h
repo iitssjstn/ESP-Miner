@@ -165,6 +165,7 @@ typedef enum {
 typedef struct
 {
     AutotuneState state;
+    const char * reason;
     int stable_checks;
     int unstable_checks;
     int rescue_attempts;
@@ -173,6 +174,10 @@ typedef struct
     int16_t last_step_mhz;     // signed: positive = frequency climb, negative = frequency retreat
     uint32_t last_action_time_s; // seconds since boot, 0 = never
     float last_efficiency_ghs_w; // hashrate/power at the last climb evaluation, Eco mode only
+    float temperature_c;
+    float power_w;
+    float error_rate_pct;
+    float efficiency_ghs_w;
     bool eco_peak_found;        // Eco mode: true once climbing has found the local hash/watt peak
 } AutotuneModule;
 
