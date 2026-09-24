@@ -724,15 +724,25 @@ components:
             - unstableChecks
             - rescueAttempts
             - backoffRemaining
+            - performanceHoldRemaining
             - lastStepMv
             - lastStepMhz
             - ecoPeakFound
             - lastActionTimeS
+            - reason
+            - temperatureC
+            - powerW
+            - power1mW
+            - errorRatePct
+            - efficiencyGhsW
           properties:
             state:
               type: string
               description: Current autotune state
-              enum: [idle, stable, climbing, rescuing, retreating, shaving, held]
+              enum: [idle, stable, climbing, rescuing, retreating, shaving, held, holding]
+            reason:
+              type: string
+              description: Current reason for the autotune state or most recent safety decision
             stableChecks:
               type: integer
               description: Consecutive stable checks since the last corrective action
@@ -745,6 +755,9 @@ components:
             backoffRemaining:
               type: integer
               description: Checks remaining in the post-action cooldown before the next climb or shave
+            performanceHoldRemaining:
+              type: integer
+              description: Checks remaining in the one-hour Performance-mode hold
             lastStepMv:
               type: integer
               description: Size and direction of the last voltage step (positive=rescue, negative=shave)
@@ -757,6 +770,21 @@ components:
             lastActionTimeS:
               type: integer
               description: Seconds since boot when the last step was made (0=never)
+            temperatureC:
+              type: number
+              description: Current highest measured ASIC temperature in degrees Celsius
+            powerW:
+              type: number
+              description: Current ASIC power in watts
+            power1mW:
+              type: number
+              description: Exponentially averaged ASIC power over approximately one minute in watts
+            errorRatePct:
+              type: number
+              description: Current ASIC error rate in percent
+            efficiencyGhsW:
+              type: number
+              description: One-minute hashrate divided by averaged power in Gh/s per watt
         miningPaused:
           type: boolean
           description: Whether mining is currently paused
