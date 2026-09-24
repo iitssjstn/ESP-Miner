@@ -152,7 +152,8 @@ static bool any_domain_underperforming(GlobalState * GLOBAL_STATE)
     return false;
 }
 
-static bool read_is_unstable(GlobalState * GLOBAL_STATE, float * out_temp, bool * out_overtemp)
+static bool read_is_unstable(GlobalState * GLOBAL_STATE, float * out_temp, bool * out_overtemp,
+                             const char ** out_reason)
 {
     PowerManagementModule * pm = &GLOBAL_STATE->POWER_MANAGEMENT_MODULE;
     SystemModule * sys = &GLOBAL_STATE->SYSTEM_MODULE;
@@ -160,6 +161,7 @@ static bool read_is_unstable(GlobalState * GLOBAL_STATE, float * out_temp, bool 
     float temp = pm->chip_temp_avg > pm->chip_temp2_avg ? pm->chip_temp_avg : pm->chip_temp2_avg;
     *out_temp = temp;
     *out_overtemp = false;
+    *out_reason = "stable";
 
     // In Performance mode, the user's own temp ceiling (if set) IS the real
     // limit - not just a soft "stop climbing" marker. Otherwise a custom
@@ -175,6 +177,7 @@ static bool read_is_unstable(GlobalState * GLOBAL_STATE, float * out_temp, bool 
 
     if (temp > temp_limit) {
         *out_overtemp = true;
+        *out_reason = "overtemp";
         return true;
     }
 
@@ -186,10 +189,12 @@ static bool read_is_unstable(GlobalState * GLOBAL_STATE, float * out_temp, bool 
     // dead domain that error rate alone wouldn't (no errors from a domain
     // producing nothing).
     if (sys->error_percentage > ERROR_RATE_LIMIT_PCT) {
+        *out_reason = "error_rate";
         return true;
     }
 
     if (any_domain_underperforming(GLOBAL_STATE)) {
+        *out_reason = "domain_underperforming";
         return true;
     }
 
@@ -276,7 +281,8 @@ void autotune_task(void *pvParameters)
 
         float temp = 0.0f;
         bool overtemp = false;
-        bool unstable = read_is_unstable(GLOBAL_STATE, &temp, &overtemp);
+        const char * instability_reason = "stable";
+        bool unstable = read_is_unstable(GLOBAL_STATE, &temp, &overtemp, &instability_reason);
         if (over_power_limit || overtemp || unstable) {
             // A safety event invalidates the previous Performance target. After
             // recovery, require a fresh stable climb before starting another hold.
@@ -300,7 +306,7 @@ void autotune_task(void *pvParameters)
         } else if (over_power_limit) {
             at->reason = "power_limit";
         } else if (unstable) {
-            at->reason = at->unstable_checks > 0 ? "confirming_instability" : "unstable";
+            at->reason = at->unstable_checks > 0 ? instability_reason : "unstable";
         } else if (performance_mode && at->performance_hold_remaining > 0) {
             at->reason = "performance_hold";
         } else if (at->backoff_remaining > 0) {
@@ -439,7 +445,12 @@ void autotune_task(void *pvParameters)
             }
 
             at->rescue_attempts = 0;
-            at->unstable_checks = 0;
+            if (at->unstable_checks > 0) {
+                // Decay instead of a hard reset - a setting that flaps between unstable
+                // and stable readings should still accumulate toward the confirmation
+                // threshold instead of resetting to 0 on every single good reading.
+                at->unstable_checks--;
+            }
             rescue_limit_warned = false;
             at->stable_checks++;
             at->state = AUTOTUNE_STATE_STABLE;
