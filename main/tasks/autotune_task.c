@@ -225,6 +225,7 @@ void autotune_task(void *pvParameters)
     at->power_1m_w = 0.0f;
     at->error_rate_pct = 0.0f;
     at->efficiency_ghs_w = 0.0f;
+    at->unstable_ceiling_mhz = 0.0f;
     at->eco_peak_found = false;
     bool rescue_limit_warned = false;
 
@@ -245,6 +246,7 @@ void autotune_task(void *pvParameters)
             at->eco_peak_found = false;
             at->last_efficiency_ghs_w = 0.0f;
             at->power_1m_w = 0.0f;
+            at->unstable_ceiling_mhz = 0.0f;
             rescue_limit_warned = false;
             continue;
         }
@@ -252,6 +254,7 @@ void autotune_task(void *pvParameters)
         if (!GLOBAL_STATE->ASIC_initalized || GLOBAL_STATE->SELF_TEST_MODULE.is_active) {
             at->power_1m_w = 0.0f;
             at->performance_hold_remaining = 0;
+            at->unstable_ceiling_mhz = 0.0f;
             continue;
         }
 
@@ -405,6 +408,9 @@ void autotune_task(void *pvParameters)
                         new_frequency = floor_freq_mhz;
                     }
 
+                    // Remember this failure point so the next climb approaches it more carefully.
+                    at->unstable_ceiling_mhz = core_frequency;
+
                     ESP_LOGI(TAG, "Unstable at voltage ceiling (%umV) - retreating frequency %g -> %g MHz",
                              core_voltage, core_frequency, new_frequency);
                     nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, new_frequency);
@@ -472,7 +478,18 @@ void autotune_task(void *pvParameters)
                     at->last_step_mhz = (int16_t)(new_frequency - core_frequency);
                     mark_action_time(at);
                 } else if (climbing_allowed && core_frequency < max_frequency) {
-                    float new_frequency = core_frequency + frequency_step(asic, core_frequency, overclock_enabled, performance_mode);
+                    if (at->unstable_ceiling_mhz > 0.0f && core_frequency >= at->unstable_ceiling_mhz) {
+                        // Already proven stable at/above the last known failure point - it's stale.
+                        at->unstable_ceiling_mhz = 0.0f;
+                    }
+
+                    float step = frequency_step(asic, core_frequency, overclock_enabled, performance_mode);
+                    if (at->unstable_ceiling_mhz > 0.0f && core_frequency + step >= at->unstable_ceiling_mhz) {
+                        // Approaching a known-unstable frequency - creep up in half steps instead
+                        // of repeatedly hitting the same failure point at full stride.
+                        step = (step / 2.0f > 1.0f) ? step / 2.0f : 1.0f;
+                    }
+                    float new_frequency = core_frequency + step;
                     if (new_frequency > max_frequency) {
                         new_frequency = max_frequency;
                     }

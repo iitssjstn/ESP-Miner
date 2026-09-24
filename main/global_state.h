@@ -181,6 +181,7 @@ typedef struct
     float power_1m_w;
     float error_rate_pct;
     float efficiency_ghs_w;
+    float unstable_ceiling_mhz; // last frequency that proved unstable (0=none known); climbing steps finer near it
     bool eco_peak_found;        // Eco mode: true once climbing has found the local hash/watt peak
 } AutotuneModule;
 
