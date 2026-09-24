@@ -19,7 +19,9 @@
 // stay the same as before (poll rate went 10s -> 2.5s for faster settings
 // pickup, so counts went up 4x to compensate) - only the responsiveness to
 // settings changes improved, none of the actual safety timing changed.
-#define STABLE_CHECKS_BEFORE_ACTION 24       // ~60s of stability before climbing freq or shaving voltage
+#define STABLE_CHECKS_BEFORE_ACTION 24       // ~60s of stability in Eco mode before an adjustment
+#define PERFORMANCE_STABLE_CHECKS_BEFORE_ACTION 12 // ~30s in Performance mode; temperature and instability checks remain unchanged
+#define PERFORMANCE_HOLD_CHECKS 1440              // ~1 hour at the 2.5s poll rate
 #define RESCUE_COOLDOWN_CHECKS 72             // ~180s hold after a rescue before the next climb/shave - a rescue means the lower voltage genuinely failed, not noise, so prove real stability before retesting that same edge
 #define RETREAT_COOLDOWN_CHECKS 12            // ~30s cooldown between frequency retreats - lets each step actually prove itself instead of cascading down every poll
 #define OVERTEMP_COOLDOWN_CHECKS 48           // ~120s cooldown after an overtemp-triggered reduction - thermal mass takes longer to actually settle than a voltage/power reading does
@@ -212,6 +214,7 @@ void autotune_task(void *pvParameters)
     at->stable_checks = 0;
     at->unstable_checks = 0;
     at->backoff_remaining = 0;
+    at->performance_hold_remaining = 0;
     at->rescue_attempts = 0;
     at->last_step_mv = 0;
     at->last_step_mhz = 0;
@@ -237,6 +240,7 @@ void autotune_task(void *pvParameters)
             at->stable_checks = 0;
             at->unstable_checks = 0;
             at->backoff_remaining = 0;
+            at->performance_hold_remaining = 0;
             at->rescue_attempts = 0;
             at->eco_peak_found = false;
             at->last_efficiency_ghs_w = 0.0f;
@@ -247,11 +251,15 @@ void autotune_task(void *pvParameters)
 
         if (!GLOBAL_STATE->ASIC_initalized || GLOBAL_STATE->SELF_TEST_MODULE.is_active) {
             at->power_1m_w = 0.0f;
+            at->performance_hold_remaining = 0;
             continue;
         }
 
         bool overclock_enabled = nvs_config_get_bool(NVS_CONFIG_OVERCLOCK_ENABLED);
         bool performance_mode = nvs_config_get_bool(NVS_CONFIG_AUTOTUNE_PROFILE);
+        if (!performance_mode) {
+            at->performance_hold_remaining = 0;
+        }
         uint16_t core_voltage = nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE);
         float core_frequency = nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY);
 
@@ -284,6 +292,8 @@ void autotune_task(void *pvParameters)
             at->reason = "power_limit";
         } else if (unstable) {
             at->reason = at->unstable_checks > 0 ? "confirming_instability" : "unstable";
+        } else if (performance_mode && at->performance_hold_remaining > 0) {
+            at->reason = "performance_hold";
         } else if (at->backoff_remaining > 0) {
             at->reason = "cooldown";
         } else {
@@ -409,6 +419,13 @@ void autotune_task(void *pvParameters)
                 }
             }
         } else {
+            if (performance_mode && at->performance_hold_remaining > 0) {
+                at->stable_checks = 0;
+                at->state = AUTOTUNE_STATE_HOLDING;
+                at->performance_hold_remaining--;
+                continue;
+            }
+
             at->rescue_attempts = 0;
             at->unstable_checks = 0;
             rescue_limit_warned = false;
@@ -417,8 +434,9 @@ void autotune_task(void *pvParameters)
 
             if (at->backoff_remaining > 0) {
                 at->backoff_remaining--;
-            } else if (at->stable_checks >= STABLE_CHECKS_BEFORE_ACTION) {
-                PowerManagementModule * pm = &GLOBAL_STATE->POWER_MANAGEMENT_MODULE;
+            } else if (at->stable_checks >= (performance_mode
+                                             ? PERFORMANCE_STABLE_CHECKS_BEFORE_ACTION
+                                             : STABLE_CHECKS_BEFORE_ACTION)) {
                 SystemModule * sys = &GLOBAL_STATE->SYSTEM_MODULE;
                 efficiency = (at->power_1m_w > 0.0f) ? sys->hashrate_1m / at->power_1m_w : 0.0f;
 
@@ -481,6 +499,13 @@ void autotune_task(void *pvParameters)
                         at->state = AUTOTUNE_STATE_SHAVING;
                         at->last_step_mv = (int16_t)(new_voltage - core_voltage);
                         mark_action_time(at);
+                    } else if (performance_mode
+                               && (core_frequency >= max_frequency || temp_ceiling_reached || power_ceiling_near)) {
+                        at->performance_hold_remaining = PERFORMANCE_HOLD_CHECKS;
+                        at->state = AUTOTUNE_STATE_HOLDING;
+                        at->reason = "performance_hold";
+                        ESP_LOGI(TAG, "Performance target reached at %g MHz / %umV - holding for 1 hour",
+                                 core_frequency, core_voltage);
                     }
                 }
                 at->stable_checks = 0;

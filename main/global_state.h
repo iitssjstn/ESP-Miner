@@ -160,6 +160,7 @@ typedef enum {
     AUTOTUNE_STATE_RETREATING,
     AUTOTUNE_STATE_SHAVING,
     AUTOTUNE_STATE_HELD,
+    AUTOTUNE_STATE_HOLDING,
 } AutotuneState;
 
 typedef struct
@@ -170,6 +171,7 @@ typedef struct
     int unstable_checks;
     int rescue_attempts;
     int backoff_remaining;
+    int performance_hold_remaining;
     int16_t last_step_mv;      // signed: positive = voltage rescue, negative = voltage shave
     int16_t last_step_mhz;     // signed: positive = frequency climb, negative = frequency retreat
     uint32_t last_action_time_s; // seconds since boot, 0 = never

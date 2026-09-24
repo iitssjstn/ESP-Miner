@@ -282,6 +282,7 @@ static const char * autotune_state_str(AutotuneState state) {
         case AUTOTUNE_STATE_RETREATING:  return "retreating";
         case AUTOTUNE_STATE_SHAVING:     return "shaving";
         case AUTOTUNE_STATE_HELD:        return "held";
+        case AUTOTUNE_STATE_HOLDING:     return "holding";
         default:                         return "idle";
     }
 }
@@ -300,6 +301,7 @@ static void system_api_add_autotune(cJSON *root, GlobalState *g) {
     cJSON_AddNumberToObject(autotune, "unstableChecks", at->unstable_checks);
     cJSON_AddNumberToObject(autotune, "rescueAttempts", at->rescue_attempts);
     cJSON_AddNumberToObject(autotune, "backoffRemaining", at->backoff_remaining);
+    cJSON_AddNumberToObject(autotune, "performanceHoldRemaining", at->performance_hold_remaining);
     cJSON_AddNumberToObject(autotune, "lastStepMv", at->last_step_mv);
     cJSON_AddNumberToObject(autotune, "lastStepMhz", at->last_step_mhz);
     cJSON_AddBoolToObject(autotune, "ecoPeakFound", at->eco_peak_found);

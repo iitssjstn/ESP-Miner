@@ -234,6 +234,7 @@ export class SystemApiService {
           unstableChecks: 0,
           rescueAttempts: 0,
           backoffRemaining: 0,
+          performanceHoldRemaining: 0,
           lastStepMv: -25,
           lastStepMhz: 10,
           ecoPeakFound: false,
