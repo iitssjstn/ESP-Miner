@@ -14,6 +14,7 @@
 #define AUTOTUNE_TEMP_LIMIT_C 68.0f
 #define DOMAIN_SHORTFALL_LIMIT 0.50f       // a single hash domain running below 50% of its expected share counts as unstable
 #define ERROR_RATE_LIMIT_PCT 2.0f          // >2% ASIC error rate counts as unstable
+#define PROACTIVE_ERROR_RATE_PCT 1.0f      // stop climbing and shave voltage once error rate reaches this, before the harder instability cutoff
 
 // Check-counts below are scaled to POLL_RATE_MS so the real-world durations
 // stay the same as before (poll rate went 10s -> 2.5s for faster settings
@@ -459,8 +460,9 @@ void autotune_task(void *pvParameters)
                 float max_temp_c = nvs_config_get_float(NVS_CONFIG_AUTOTUNE_MAX_TEMP);
                 bool temp_ceiling_reached = performance_mode && max_temp_c > 0.0f && temp >= max_temp_c;
                 bool power_ceiling_near = max_power_limit > 0.0f && current_power >= max_power_limit * PROACTIVE_POWER_MARGIN;
+                bool error_rate_near_limit = at->error_rate_pct >= PROACTIVE_ERROR_RATE_PCT;
 
-                bool climbing_allowed = (performance_mode ? !temp_ceiling_reached : !at->eco_peak_found) && !power_ceiling_near;
+                bool climbing_allowed = (performance_mode ? !temp_ceiling_reached : !at->eco_peak_found) && !power_ceiling_near && !error_rate_near_limit;
 
                 if (eco_regressed) {
                     // Eco mode: the last climb step made hash/watt worse - that step
@@ -514,6 +516,9 @@ void autotune_task(void *pvParameters)
                         } else if (temp_ceiling_reached) {
                             ESP_LOGI(TAG, "Stable but at temp ceiling (%.1fC >= %.1fC) - shaving voltage %umV -> %umV instead of climbing",
                                      temp, max_temp_c, core_voltage, new_voltage);
+                        } else if (error_rate_near_limit) {
+                            ESP_LOGI(TAG, "Stable but error rate rising (%.2f%% >= %.2f%%) - shaving voltage %umV -> %umV instead of climbing",
+                                     at->error_rate_pct, PROACTIVE_ERROR_RATE_PCT, core_voltage, new_voltage);
                         } else {
                             ESP_LOGI(TAG, "Stable, no more climbing - shaving voltage %umV -> %umV", core_voltage, new_voltage);
                         }
@@ -522,7 +527,7 @@ void autotune_task(void *pvParameters)
                         at->last_step_mv = (int16_t)(new_voltage - core_voltage);
                         mark_action_time(at);
                     } else if (performance_mode
-                               && (core_frequency >= max_frequency || temp_ceiling_reached || power_ceiling_near)) {
+                               && (core_frequency >= max_frequency || temp_ceiling_reached || power_ceiling_near || error_rate_near_limit)) {
                         at->performance_hold_remaining = PERFORMANCE_HOLD_CHECKS;
                         at->state = AUTOTUNE_STATE_HOLDING;
                         at->reason = "performance_hold";
