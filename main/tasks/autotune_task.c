@@ -502,6 +502,23 @@ void autotune_task(void *pvParameters)
                     at->state = AUTOTUNE_STATE_CLIMBING;
                     at->last_step_mhz = (int16_t)(new_frequency - core_frequency);
                     mark_action_time(at);
+                } else if (error_rate_near_limit && core_frequency > floor_freq_mhz) {
+                    // Rising error rate means this frequency is marginal at the current
+                    // voltage - ease frequency down instead of lowering voltage, which
+                    // would only reduce the stability margin further and risk a real
+                    // instability event (and the rescue that follows it).
+                    float new_frequency = core_frequency - frequency_step(asic, core_frequency, overclock_enabled, performance_mode);
+                    if (new_frequency < floor_freq_mhz) {
+                        new_frequency = floor_freq_mhz;
+                    }
+
+                    ESP_LOGI(TAG, "Stable but error rate rising (%.2f%% >= %.2f%%) - easing frequency %g -> %g MHz",
+                             at->error_rate_pct, PROACTIVE_ERROR_RATE_PCT, core_frequency, new_frequency);
+                    nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, new_frequency);
+                    at->unstable_ceiling_mhz = core_frequency; // climb back to this point carefully next time
+                    at->state = AUTOTUNE_STATE_RETREATING;
+                    at->last_step_mhz = (int16_t)(new_frequency - core_frequency);
+                    mark_action_time(at);
                 } else {
                     // Climbing has stopped: at the frequency ceiling, at the Eco
                     // efficiency peak, or (Performance mode) at the user's temp
@@ -516,30 +533,12 @@ void autotune_task(void *pvParameters)
                         } else if (temp_ceiling_reached) {
                             ESP_LOGI(TAG, "Stable but at temp ceiling (%.1fC >= %.1fC) - shaving voltage %umV -> %umV instead of climbing",
                                      temp, max_temp_c, core_voltage, new_voltage);
-                        } else if (error_rate_near_limit) {
-                            ESP_LOGI(TAG, "Stable but error rate rising (%.2f%% >= %.2f%%) - shaving voltage %umV -> %umV instead of climbing",
-                                     at->error_rate_pct, PROACTIVE_ERROR_RATE_PCT, core_voltage, new_voltage);
                         } else {
                             ESP_LOGI(TAG, "Stable, no more climbing - shaving voltage %umV -> %umV", core_voltage, new_voltage);
                         }
                         nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, new_voltage);
                         at->state = AUTOTUNE_STATE_SHAVING;
                         at->last_step_mv = (int16_t)(new_voltage - core_voltage);
-                        mark_action_time(at);
-                    } else if (error_rate_near_limit && core_frequency > floor_freq_mhz) {
-                        // Voltage is already at its floor and the error rate is still
-                        // elevated - ease frequency down to find a cleaner operating point.
-                        float new_frequency = core_frequency - frequency_step(asic, core_frequency, overclock_enabled, performance_mode);
-                        if (new_frequency < floor_freq_mhz) {
-                            new_frequency = floor_freq_mhz;
-                        }
-
-                        ESP_LOGI(TAG, "Stable but error rate rising (%.2f%% >= %.2f%%) at voltage floor - easing frequency %g -> %g MHz",
-                                 at->error_rate_pct, PROACTIVE_ERROR_RATE_PCT, core_frequency, new_frequency);
-                        nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, new_frequency);
-                        at->unstable_ceiling_mhz = core_frequency; // climb back to this point carefully next time
-                        at->state = AUTOTUNE_STATE_RETREATING;
-                        at->last_step_mhz = (int16_t)(new_frequency - core_frequency);
                         mark_action_time(at);
                     } else if (performance_mode
                                && (core_frequency >= max_frequency || temp_ceiling_reached || power_ceiling_near || error_rate_near_limit)) {
