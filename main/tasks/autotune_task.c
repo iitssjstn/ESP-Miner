@@ -273,6 +273,11 @@ void autotune_task(void *pvParameters)
         float temp = 0.0f;
         bool overtemp = false;
         bool unstable = read_is_unstable(GLOBAL_STATE, &temp, &overtemp);
+        if (over_power_limit || overtemp || unstable) {
+            // A safety event invalidates the previous Performance target. After
+            // recovery, require a fresh stable climb before starting another hold.
+            at->performance_hold_remaining = 0;
+        }
         if (at->power_1m_w <= 0.0f) {
             at->power_1m_w = current_power;
         } else {
