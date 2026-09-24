@@ -216,6 +216,10 @@ void autotune_task(void *pvParameters)
     at->last_step_mhz = 0;
     at->last_action_time_s = 0;
     at->last_efficiency_ghs_w = 0.0f;
+    at->temperature_c = 0.0f;
+    at->power_w = 0.0f;
+    at->error_rate_pct = 0.0f;
+    at->efficiency_ghs_w = 0.0f;
     at->eco_peak_found = false;
     bool rescue_limit_warned = false;
 
@@ -268,13 +272,12 @@ void autotune_task(void *pvParameters)
         } else if (over_power_limit) {
             at->reason = "power_limit";
         } else if (unstable) {
-            at->reason = "unstable";
+            at->reason = at->unstable_checks > 0 ? "confirming_instability" : "unstable";
         } else if (at->backoff_remaining > 0) {
             at->reason = "cooldown";
         } else {
             at->reason = "seeking";
         }
-
         if (over_power_limit || overtemp) {
             // Distinct from the general instability path on purpose: instability
             // there means "needs more voltage", which would only make an

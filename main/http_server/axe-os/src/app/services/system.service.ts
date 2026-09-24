@@ -229,6 +229,7 @@ export class SystemApiService {
         autotuneFrequencyStep: 0,
         autotune: {
           state: "stable" as const,
+          reason: "seeking",
           stableChecks: 4,
           unstableChecks: 0,
           rescueAttempts: 0,
@@ -237,6 +238,10 @@ export class SystemApiService {
           lastStepMhz: 10,
           ecoPeakFound: false,
           lastActionTimeS: 180,
+          temperatureC: 61.5,
+          powerW: 15.2,
+          errorRatePct: 0,
+          efficiencyGhsW: 29.1,
         },
       }
     ).pipe(delay(1000));

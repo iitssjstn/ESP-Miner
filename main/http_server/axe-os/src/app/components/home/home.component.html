@@ -284,7 +284,7 @@
             <div class="mt-4">
               <h6 class="flex justify-between mb-1">
                 Autotune
-                <span appTooltip="{{($any(info.autotune).reason || 'status unknown') + ' | ' + ($any(info.autotune).temperatureC || 0 | number: '1.0-1') + ' °C | ' + ($any(info.autotune).powerW || 0 | number: '1.0-1') + ' W'}}" tooltipPosition="bottom" [ngClass]="{
+                <span appTooltip="{{($any(info.autotune).reason || 'status unknown') + ' | ' + (($any(info.autotune).temperatureC || 0) | number: '1.0-1') + ' °C | ' + (($any(info.autotune).powerW || 0) | number: '1.0-1') + ' W'}}" tooltipPosition="bottom" [ngClass]="{
                   'text-green-500': info.autotune.state === 'stable' || info.autotune.state === 'climbing',
                   'text-yellow-500': info.autotune.state === 'rescuing' || info.autotune.state === 'shaving' || info.autotune.state === 'retreating',
                   'text-red-500': info.autotune.state === 'held',
