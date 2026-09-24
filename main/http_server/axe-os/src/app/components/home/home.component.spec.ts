@@ -172,6 +172,7 @@ const mockSystemInfo: ISystemInfo = {
     lastActionTimeS: 180,
     temperatureC: 61.5,
     powerW: 15.2,
+    power1mW: 15.1,
     errorRatePct: 0,
     efficiencyGhsW: 29.1,
   },

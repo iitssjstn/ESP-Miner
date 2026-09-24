@@ -34,6 +34,7 @@
 #define OVERCLOCK_FREQUENCY_STEP_MHZ 5.0f
 #define ECO_EFFICIENCY_TOLERANCE 0.98f // allow 2% noise before treating a climb as an efficiency regression
 #define PROACTIVE_POWER_MARGIN 0.95f // stop climbing at 95% of the global power limit, before the cap is actually hit
+#define POWER_AVERAGE_ALPHA ((float) POLL_RATE_MS / 60000.0f)
 
 static const char * TAG = "autotune";
 
@@ -218,6 +219,7 @@ void autotune_task(void *pvParameters)
     at->last_efficiency_ghs_w = 0.0f;
     at->temperature_c = 0.0f;
     at->power_w = 0.0f;
+    at->power_1m_w = 0.0f;
     at->error_rate_pct = 0.0f;
     at->efficiency_ghs_w = 0.0f;
     at->eco_peak_found = false;
@@ -238,11 +240,13 @@ void autotune_task(void *pvParameters)
             at->rescue_attempts = 0;
             at->eco_peak_found = false;
             at->last_efficiency_ghs_w = 0.0f;
+            at->power_1m_w = 0.0f;
             rescue_limit_warned = false;
             continue;
         }
 
         if (!GLOBAL_STATE->ASIC_initalized || GLOBAL_STATE->SELF_TEST_MODULE.is_active) {
+            at->power_1m_w = 0.0f;
             continue;
         }
 
@@ -261,7 +265,14 @@ void autotune_task(void *pvParameters)
         float temp = 0.0f;
         bool overtemp = false;
         bool unstable = read_is_unstable(GLOBAL_STATE, &temp, &overtemp);
-        float efficiency = (current_power > 0.0f) ? GLOBAL_STATE->SYSTEM_MODULE.current_hashrate / current_power : 0.0f;
+        if (at->power_1m_w <= 0.0f) {
+            at->power_1m_w = current_power;
+        } else {
+            at->power_1m_w += (current_power - at->power_1m_w) * POWER_AVERAGE_ALPHA;
+        }
+        // Use the existing one-minute hashrate average for efficiency decisions.
+        // Pair it with averaged power so transient readings do not reject a good step.
+        float efficiency = (at->power_1m_w > 0.0f) ? GLOBAL_STATE->SYSTEM_MODULE.hashrate_1m / at->power_1m_w : 0.0f;
         at->temperature_c = temp;
         at->power_w = current_power;
         at->error_rate_pct = GLOBAL_STATE->SYSTEM_MODULE.error_percentage;
@@ -409,7 +420,7 @@ void autotune_task(void *pvParameters)
             } else if (at->stable_checks >= STABLE_CHECKS_BEFORE_ACTION) {
                 PowerManagementModule * pm = &GLOBAL_STATE->POWER_MANAGEMENT_MODULE;
                 SystemModule * sys = &GLOBAL_STATE->SYSTEM_MODULE;
-                efficiency = (pm->power > 0.0f) ? sys->current_hashrate / pm->power : 0.0f;
+                efficiency = (at->power_1m_w > 0.0f) ? sys->hashrate_1m / at->power_1m_w : 0.0f;
 
                 bool eco_regressed = !performance_mode && at->eco_peak_found == false
                                       && at->last_efficiency_ghs_w > 0.0f

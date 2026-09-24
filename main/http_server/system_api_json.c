@@ -306,6 +306,7 @@ static void system_api_add_autotune(cJSON *root, GlobalState *g) {
     cJSON_AddNumberToObject(autotune, "lastActionTimeS", at->last_action_time_s);
     cJSON_AddNumberToObject(autotune, "temperatureC", at->temperature_c);
     cJSON_AddNumberToObject(autotune, "powerW", at->power_w);
+    cJSON_AddNumberToObject(autotune, "power1mW", at->power_1m_w);
     cJSON_AddNumberToObject(autotune, "errorRatePct", at->error_rate_pct);
     cJSON_AddNumberToObject(autotune, "efficiencyGhsW", at->efficiency_ghs_w);
 }

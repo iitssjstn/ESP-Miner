@@ -176,6 +176,7 @@ typedef struct
     float last_efficiency_ghs_w; // hashrate/power at the last climb evaluation, Eco mode only
     float temperature_c;
     float power_w;
+    float power_1m_w;
     float error_rate_pct;
     float efficiency_ghs_w;
     bool eco_peak_found;        // Eco mode: true once climbing has found the local hash/watt peak
