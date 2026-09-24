@@ -526,6 +526,21 @@ void autotune_task(void *pvParameters)
                         at->state = AUTOTUNE_STATE_SHAVING;
                         at->last_step_mv = (int16_t)(new_voltage - core_voltage);
                         mark_action_time(at);
+                    } else if (error_rate_near_limit && core_frequency > floor_freq_mhz) {
+                        // Voltage is already at its floor and the error rate is still
+                        // elevated - ease frequency down to find a cleaner operating point.
+                        float new_frequency = core_frequency - frequency_step(asic, core_frequency, overclock_enabled, performance_mode);
+                        if (new_frequency < floor_freq_mhz) {
+                            new_frequency = floor_freq_mhz;
+                        }
+
+                        ESP_LOGI(TAG, "Stable but error rate rising (%.2f%% >= %.2f%%) at voltage floor - easing frequency %g -> %g MHz",
+                                 at->error_rate_pct, PROACTIVE_ERROR_RATE_PCT, core_frequency, new_frequency);
+                        nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, new_frequency);
+                        at->unstable_ceiling_mhz = core_frequency; // climb back to this point carefully next time
+                        at->state = AUTOTUNE_STATE_RETREATING;
+                        at->last_step_mhz = (int16_t)(new_frequency - core_frequency);
+                        mark_action_time(at);
                     } else if (performance_mode
                                && (core_frequency >= max_frequency || temp_ceiling_reached || power_ceiling_near || error_rate_near_limit)) {
                         at->performance_hold_remaining = PERFORMANCE_HOLD_CHECKS;
