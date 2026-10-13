@@ -228,6 +228,7 @@ static void system_api_add_config(cJSON *root, GlobalState *g) {
     cJSON_AddFloatToObject(root, "autotuneMaxTemp", nvs_config_get_float(NVS_CONFIG_AUTOTUNE_MAX_TEMP));
     cJSON_AddNumberToObject(root, "autotuneVoltageStep", nvs_config_get_u16(NVS_CONFIG_AUTOTUNE_VOLTAGE_STEP));
     cJSON_AddFloatToObject(root, "autotuneFrequencyStep", nvs_config_get_float(NVS_CONFIG_AUTOTUNE_FREQUENCY_STEP));
+    cJSON_AddNumberToObject(root, "autotuneBeyondVendor", nvs_config_get_bool(NVS_CONFIG_AUTOTUNE_BEYOND_VENDOR) ? 1 : 0);
     char *disp_name = nvs_config_get_string(NVS_CONFIG_DISPLAY);
     cJSON_AddStringToObject(root, "display", disp_name ? disp_name : "");
     free(disp_name);

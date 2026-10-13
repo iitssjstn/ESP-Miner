@@ -276,6 +276,7 @@ components:
         - autotuneMaxTemp
         - autotuneVoltageStep
         - autotuneFrequencyStep
+        - autotuneBeyondVendor
         - autotune
         - primaryPoolIndex
         - secondaryPoolIndex
@@ -522,6 +523,9 @@ components:
         autotuneFrequencyStep:
           type: number
           description: User-set frequency step size in MHz for autotune, Performance mode only (0=use built-in vendor/overclock step sizes)
+        autotuneBeyondVendor:
+          type: integer
+          description: "Performance mode only - allow autotune past the vendor frequency table. With Max Frequency at 0 there is no fixed frequency cap: climbing stops on temperature (Max Temp, or 3C below the overtemp limit), power (Max Power Limit, or the board maximum) and stability. Higher risk of heat, instability and reduced chip lifespan."
         useCustomWWW:
           type: integer
           description: Whether to serve files from the SPIFFS www partition instead of the embedded Web UI (0=embedded, 1=custom/SPIFFS)
@@ -1118,6 +1122,12 @@ components:
           description: User-set frequency step size in MHz for autotune, Performance mode only (0=use built-in vendor/overclock step sizes)
           minimum: 0
           maximum: 50
+          examples:
+            - 0
+        autotuneBeyondVendor:
+          type: integer
+          description: "Performance mode only - allow autotune past the vendor frequency table. With Max Frequency at 0 there is no fixed frequency cap: climbing stops on temperature (Max Temp, or 3C below the overtemp limit), power (Max Power Limit, or the board maximum) and stability. Higher risk of heat, instability and reduced chip lifespan."
+          enum: [0,1]
           examples:
             - 0
         useCustomWWW:

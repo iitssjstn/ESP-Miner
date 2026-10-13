@@ -81,6 +81,25 @@
         </div>
         @if (form.controls['autotunePerformanceMode'].value) {
           <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
+            <label for="autotuneBeyondVendor" class="w-full md:w-2/12 font-medium cursor-pointer select-none"
+              appTooltip="Lets autotune climb past the vendor frequency limit. With Max Frequency at 0 there is no fixed cap: it keeps climbing until temperature (Max Temp, or 3°C below the overtemp limit), power (Max Power Limit, or the board maximum) or stability stops it. Use at your own risk.">
+              Beyond Vendor Limit
+            </label>
+            <div class="w-full md:w-10/12 flex items-center">
+              <app-checkbox name="autotuneBeyondVendor" formControlName="autotuneBeyondVendor" inputId="autotuneBeyondVendor" [binary]="true"></app-checkbox>
+            </div>
+          </div>
+          @if (form.controls['autotuneBeyondVendor'].value) {
+            <div class="flex items-center gap-2 p-4 rounded-lg border w-full mb-4 bg-[#ffecb3] text-[#614a00] border-[#ffe082]">
+              <i class="pi pi-exclamation-triangle"></i>
+              <span>Running beyond the vendor limits is at your own risk. It increases heat and power draw, can cause instability,
+                and may shorten the lifespan of (or damage) the ASIC, voltage regulator and power supply. With Max Frequency at 0
+                there is no fixed limit: only temperature, power and stability stop the climb, so make sure your cooling and power
+                supply can handle it and set Max Temp and Max Power Limit to values your hardware can take. Autotune still starts
+                from safe defaults after every restart and backs off on overtemp, power limit and instability.</span>
+            </div>
+          }
+          <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
             <label for="autotuneMaxTemp" class="w-full md:w-2/12 font-medium cursor-pointer select-none"
               appTooltip="In Performance mode, autotune stops climbing frequency once the chip reaches this temperature, instead of waiting for real instability. Maximum 70°C, so it always acts before the 75°C overheat shutdown. Leave at 0 to disable and rely on stability alone.">
               Autotune Max Temp
