@@ -1,4 +1,5 @@
 #include "esp_log.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "global_state.h"
@@ -29,6 +30,7 @@
 #define POWER_LIMIT_CHECK_INTERVAL_LOOPS 20 // ~2s at the 100ms poll rate
 #define POWER_LIMIT_VOLTAGE_STEP_MV 25
 #define POWER_LIMIT_FREQUENCY_STEP_MHZ 10.0f
+#define POWER_LIMIT_AUTOTUNE_MARGIN 1.05f // with autotune on, this cap is only a backstop - autotune reduces first
 
 static const char * TAG = "power_management";
 
@@ -118,24 +120,28 @@ void POWER_MANAGEMENT_task(void * pvParameters)
     PowerManagementModule * power_management = &GLOBAL_STATE->POWER_MANAGEMENT_MODULE;
     SystemModule * sys_module = &GLOBAL_STATE->SYSTEM_MODULE;
 
-    // Boot safety net: always start from the vendor-safe defaults, no matter
-    // why the device restarted (crash, panic, brownout, watchdog, a manual
-    // restart, or an OTA reboot). Blindly re-applying whatever voltage or
-    // frequency was persisted before a reset would just recreate a boot loop
-    // if that value was the actual cause - with no way out short of
-    // reflashing. Autotune (if enabled) climbs back up from here on its own;
-    // a manual custom setting has to be re-entered, which is a small price
-    // for guaranteeing the device always comes back up on its own.
-    uint16_t default_voltage_mv = GLOBAL_STATE->DEVICE_CONFIG.family.asic.default_voltage_mv;
-    float default_frequency_mhz = GLOBAL_STATE->DEVICE_CONFIG.family.asic.default_frequency_mhz;
-    if (nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE) != default_voltage_mv) {
-        nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, default_voltage_mv);
+    // Boot safety net: start from the vendor-safe defaults when the previous
+    // run crashed (panic, watchdog, brownout) - re-applying the persisted
+    // voltage/frequency could recreate a boot loop if that value was the
+    // cause. With autotune enabled we always start from defaults, since
+    // autotune climbs back up on its own. A manual setting survives a normal
+    // restart, power cycle or OTA reboot.
+    esp_reset_reason_t reset_reason = esp_reset_reason();
+    bool crashed = reset_reason == ESP_RST_PANIC || reset_reason == ESP_RST_INT_WDT
+                   || reset_reason == ESP_RST_TASK_WDT || reset_reason == ESP_RST_WDT
+                   || reset_reason == ESP_RST_BROWNOUT;
+    if (crashed || nvs_config_get_bool(NVS_CONFIG_AUTOTUNE_ENABLED)) {
+        uint16_t default_voltage_mv = GLOBAL_STATE->DEVICE_CONFIG.family.asic.default_voltage_mv;
+        float default_frequency_mhz = GLOBAL_STATE->DEVICE_CONFIG.family.asic.default_frequency_mhz;
+        if (nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE) != default_voltage_mv) {
+            nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, default_voltage_mv);
+        }
+        if (nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY) != default_frequency_mhz) {
+            nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, default_frequency_mhz);
+        }
+        ESP_LOGI(TAG, "Boot safety (reset reason %d%s): reset ASIC voltage/frequency to vendor defaults (%umV, %g MHz)",
+                 reset_reason, crashed ? ", crash" : ", autotune", default_voltage_mv, default_frequency_mhz);
     }
-    if (nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY) != default_frequency_mhz) {
-        nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, default_frequency_mhz);
-    }
-    ESP_LOGI(TAG, "Boot safety: reset ASIC voltage/frequency to vendor defaults (%umV, %g MHz)",
-             default_voltage_mv, default_frequency_mhz);
 
     POWER_MANAGEMENT_init_frequency(GLOBAL_STATE);
     
@@ -251,14 +257,18 @@ void POWER_MANAGEMENT_task(void * pvParameters)
 
         // Hard power cap - independent of autotune, always active (like overheat
         // protection). Reactive only: it never climbs back up on its own, it just
-        // holds power under the user's ceiling. Rate limited to every ~2s so it
-        // doesn't fight with autotune's own (slower, 10s-cadence) adjustments.
+        // holds power under the user's ceiling. Rate limited to every ~2s. When
+        // autotune is enabled it already reduces (with its own cooldown) as soon
+        // as the limit is crossed, so this cap only steps in a few percent above
+        // the limit - otherwise both would reduce at once and overshoot.
         power_limit_check_counter++;
         if (!GLOBAL_STATE->SELF_TEST_MODULE.is_active && power_limit_check_counter >= POWER_LIMIT_CHECK_INTERVAL_LOOPS) {
             power_limit_check_counter = 0;
 
             float max_power_limit = nvs_config_get_float(NVS_CONFIG_MAX_POWER_LIMIT);
-            if (max_power_limit > 0.0f && power_management->power > max_power_limit) {
+            float cap_threshold = nvs_config_get_bool(NVS_CONFIG_AUTOTUNE_ENABLED)
+                                  ? max_power_limit * POWER_LIMIT_AUTOTUNE_MARGIN : max_power_limit;
+            if (max_power_limit > 0.0f && power_management->power > cap_threshold) {
                 uint16_t voltage_floor_mv = GLOBAL_STATE->DEVICE_CONFIG.family.asic.voltage_options[0];
                 float frequency_floor_mhz = GLOBAL_STATE->DEVICE_CONFIG.family.asic.default_frequency_mhz;
 
