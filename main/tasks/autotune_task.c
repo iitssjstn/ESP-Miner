@@ -37,6 +37,7 @@
 
 #define VENDOR_FREQUENCY_STEP_MHZ 10.0f
 #define OVERCLOCK_FREQUENCY_STEP_MHZ 5.0f
+#define OVERCLOCK_FREQUENCY_HEADROOM_MHZ 150.0f // automatic ceiling above vendor max when beyond-vendor tuning is allowed
 #define MAX_CUSTOM_VOLTAGE_STEP_MV 50       // a typo in the custom step must not turn into a huge voltage jump
 #define MAX_CUSTOM_FREQUENCY_STEP_MHZ 50.0f
 #define ECO_EFFICIENCY_TOLERANCE 0.98f // allow 2% noise before treating a climb as an efficiency regression
@@ -117,13 +118,13 @@ static uint16_t effective_max_voltage(const AsicConfig * asic, bool overclock_en
     return user_max < base_ceiling ? user_max : base_ceiling;
 }
 
-static float effective_max_frequency(const AsicConfig * asic, bool overclock_enabled)
+static float effective_max_frequency(const AsicConfig * asic, bool overclock_enabled, bool beyond_vendor)
 {
     float vendor_max = (float) frequency_table_max(asic);
     float user_max = nvs_config_get_float(NVS_CONFIG_AUTOTUNE_MAX_FREQUENCY);
 
     if (user_max <= 0.0f) {
-        return vendor_max;
+        return beyond_vendor ? vendor_max + OVERCLOCK_FREQUENCY_HEADROOM_MHZ : vendor_max;
     }
     return overclock_enabled ? user_max : (user_max < vendor_max ? user_max : vendor_max);
 }
@@ -313,8 +314,11 @@ void autotune_task(void *pvParameters)
             reaction_backoff--;
         }
 
-        bool overclock_enabled = nvs_config_get_bool(NVS_CONFIG_OVERCLOCK_ENABLED);
         bool performance_mode = nvs_config_get_bool(NVS_CONFIG_AUTOTUNE_PROFILE);
+        // "Beyond Vendor Limit" (Performance mode only) is its own opt-in to tune past
+        // the vendor tables, and implies the overclock ceilings/steps for autotune.
+        bool beyond_vendor = performance_mode && nvs_config_get_bool(NVS_CONFIG_AUTOTUNE_BEYOND_VENDOR);
+        bool overclock_enabled = nvs_config_get_bool(NVS_CONFIG_OVERCLOCK_ENABLED) || beyond_vendor;
         if (!performance_mode) {
             at->performance_hold_remaining = 0;
         }
@@ -334,7 +338,7 @@ void autotune_task(void *pvParameters)
         }
 
         uint16_t max_voltage = effective_max_voltage(asic, overclock_enabled);
-        float max_frequency = effective_max_frequency(asic, overclock_enabled);
+        float max_frequency = effective_max_frequency(asic, overclock_enabled, beyond_vendor);
 
         float current_power = GLOBAL_STATE->POWER_MANAGEMENT_MODULE.power;
         float max_power_limit = nvs_config_get_float(NVS_CONFIG_MAX_POWER_LIMIT);

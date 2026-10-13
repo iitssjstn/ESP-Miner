@@ -227,6 +227,7 @@ export class SystemApiService {
         autotuneMaxTemp: 0,
         autotuneVoltageStep: 0,
         autotuneFrequencyStep: 0,
+        autotuneBeyondVendor: 0,
         autotune: {
           state: "stable" as const,
           reason: "seeking",
