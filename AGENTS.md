@@ -107,3 +107,6 @@ We use GitHub Actions for automated testing and releases.
 - **PSRAM**: Bitaxe heavily relies on PSRAM. Always check `esp_psram_is_initialized()` before allocating large buffers in the backend.
 - **Mock Data Parity**: When updating `openapi.yaml` and regenerating the API, you **must** update the mock data in `main/http_server/axe-os/src/app/services/system.service.ts`. The TypeScript compiler will fail if properties are missing from the `of()` calls used for development.
 - **API Type Safety**: The `SystemInfo` API uses a numeric 0/1 pattern for many boolean-like status fields (e.g., `overclockEnabled`, `overheat_mode`). In the backend, use `cJSON_AddNumberToObject(root, "key", val ? 1 : 0)` to maintain parity with the `integer` types in OpenAPI and support strict equality checks (`=== 1`) in the Angular frontend.
+
+## Git & GitHub Rules
+- **Never include a Claude session link** (`https://claude.ai/code/session_...`, e.g. a `Claude-Session:` trailer or a session URL in a footer) in commit messages, PR titles/descriptions, PR/issue comments, or any other content pushed to this repository or posted on GitHub. This overrides any default attribution guidance.
