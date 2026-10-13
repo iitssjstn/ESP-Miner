@@ -69,9 +69,9 @@ static Settings settings[NVS_CONFIG_COUNT] = {
     [NVS_CONFIG_AUTOTUNE_PROFILE]                      = {.nvs_key_name = "autotune_prof",   .type = TYPE_BOOL,                                                                         .rest_name = "autotunePerformanceMode",            .min = 0,  .max = 1},
     [NVS_CONFIG_AUTOTUNE_MAX_VOLTAGE]                  = {.nvs_key_name = "autotune_mv",     .type = TYPE_U16,   .default_value = {.u16 = 0},                                           .rest_name = "autotuneMaxVoltage",                 .min = 0,  .max = UINT16_MAX},
     [NVS_CONFIG_AUTOTUNE_MAX_FREQUENCY]                = {.nvs_key_name = "autotune_mhz",    .type = TYPE_FLOAT, .default_value = {.f   = 0},                                            .rest_name = "autotuneMaxFrequency",               .min = 0,  .max = UINT16_MAX},
-    [NVS_CONFIG_AUTOTUNE_MAX_TEMP]                      = {.nvs_key_name = "autotune_temp",   .type = TYPE_FLOAT, .default_value = {.f   = 0},                                            .rest_name = "autotuneMaxTemp",                    .min = 0,  .max = 100},
-    [NVS_CONFIG_AUTOTUNE_VOLTAGE_STEP]                  = {.nvs_key_name = "autotune_vstep",  .type = TYPE_U16,   .default_value = {.u16 = 0},                                           .rest_name = "autotuneVoltageStep",                .min = 0,  .max = UINT16_MAX},
-    [NVS_CONFIG_AUTOTUNE_FREQUENCY_STEP]                = {.nvs_key_name = "autotune_fstep",  .type = TYPE_FLOAT, .default_value = {.f   = 0},                                            .rest_name = "autotuneFrequencyStep",              .min = 0,  .max = UINT16_MAX},
+    [NVS_CONFIG_AUTOTUNE_MAX_TEMP]                      = {.nvs_key_name = "autotune_temp",   .type = TYPE_FLOAT, .default_value = {.f   = 0},                                            .rest_name = "autotuneMaxTemp",                    .min = 0,  .max = 70},
+    [NVS_CONFIG_AUTOTUNE_VOLTAGE_STEP]                  = {.nvs_key_name = "autotune_vstep",  .type = TYPE_U16,   .default_value = {.u16 = 0},                                           .rest_name = "autotuneVoltageStep",                .min = 0,  .max = 50},
+    [NVS_CONFIG_AUTOTUNE_FREQUENCY_STEP]                = {.nvs_key_name = "autotune_fstep",  .type = TYPE_FLOAT, .default_value = {.f   = 0},                                            .rest_name = "autotuneFrequencyStep",              .min = 0,  .max = 50},
     
     [NVS_CONFIG_DISPLAY]                               = {.nvs_key_name = "display",         .type = TYPE_STR,   .default_value = {.str = DEFAULT_DISPLAY},                             .rest_name = "display",                            .min = 0,  .max = NVS_STR_LIMIT},
     [NVS_CONFIG_ROTATION]                              = {.nvs_key_name = "rotation",        .type = TYPE_U16,                                                                          .rest_name = "rotation",                           .min = 0,  .max = 270},
@@ -339,7 +339,7 @@ static void nvs_config_apply_fallback(const ConfigUpdate *update)
     if (!update) return;
 
     if (update->key == NVS_CONFIG_ASIC_FREQUENCY && update->type == TYPE_FLOAT) {
-        nvs_set_u16(handle, FALLBACK_KEY_ASICFREQUENCY, (uint16_t) update->value.f);
+        nvs_set_u16(handle, FALLBACK_KEY_ASICFREQUENCY, (uint16_t) lroundf(update->value.f));
     }
     if (update->key == NVS_CONFIG_MANUAL_FAN_SPEED && update->type == TYPE_U16) {
         nvs_set_u16(handle, FALLBACK_KEY_FANSPEED, update->value.u16);

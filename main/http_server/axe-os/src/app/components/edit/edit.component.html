@@ -82,11 +82,11 @@
         @if (form.controls['autotunePerformanceMode'].value) {
           <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
             <label for="autotuneMaxTemp" class="w-full md:w-2/12 font-medium cursor-pointer select-none"
-              appTooltip="In Performance mode, autotune stops climbing frequency once the chip reaches this temperature, instead of waiting for real instability. Leave at 0 to disable and rely on stability alone.">
+              appTooltip="In Performance mode, autotune stops climbing frequency once the chip reaches this temperature, instead of waiting for real instability. Maximum 70°C, so it always acts before the 75°C overheat shutdown. Leave at 0 to disable and rely on stability alone.">
               Autotune Max Temp
             </label>
             <div class="w-full md:w-10/12">
-              <input class="input-text" id="autotuneMaxTemp" formControlName="autotuneMaxTemp" type="number" min="0" max="100" placeholder="0 = disabled" />
+              <input class="input-text" id="autotuneMaxTemp" formControlName="autotuneMaxTemp" type="number" min="0" max="70" placeholder="0 = disabled" />
             </div>
           </div>
           <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
@@ -95,7 +95,7 @@
               Autotune Voltage Step
             </label>
             <div class="w-full md:w-10/12">
-              <input class="input-text" id="autotuneVoltageStep" formControlName="autotuneVoltageStep" type="number" min="0" placeholder="0 = built-in" />
+              <input class="input-text" id="autotuneVoltageStep" formControlName="autotuneVoltageStep" type="number" min="0" max="50" placeholder="0 = built-in" />
             </div>
           </div>
           <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
@@ -104,7 +104,7 @@
               Autotune Frequency Step
             </label>
             <div class="w-full md:w-10/12">
-              <input class="input-text" id="autotuneFrequencyStep" formControlName="autotuneFrequencyStep" type="number" min="0" placeholder="0 = built-in" />
+              <input class="input-text" id="autotuneFrequencyStep" formControlName="autotuneFrequencyStep" type="number" min="0" max="50" placeholder="0 = built-in" />
             </div>
           </div>
         }
