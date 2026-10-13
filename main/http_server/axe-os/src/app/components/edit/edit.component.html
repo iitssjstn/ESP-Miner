@@ -82,7 +82,7 @@
         @if (form.controls['autotunePerformanceMode'].value) {
           <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">
             <label for="autotuneBeyondVendor" class="w-full md:w-2/12 font-medium cursor-pointer select-none"
-              appTooltip="Lets autotune climb past the vendor frequency and voltage limits. With Max Frequency / Max Voltage left at 0, the automatic ceilings become vendor max +150 MHz and +150 mV. Use at your own risk.">
+              appTooltip="Lets autotune climb past the vendor frequency limit. With Max Frequency at 0 there is no fixed cap: it keeps climbing until temperature (Max Temp, or 3°C below the overtemp limit), power (Max Power Limit, or the board maximum) or stability stops it. Use at your own risk.">
               Beyond Vendor Limit
             </label>
             <div class="w-full md:w-10/12 flex items-center">
@@ -93,9 +93,10 @@
             <div class="flex items-center gap-2 p-4 rounded-lg border w-full mb-4 bg-[#ffecb3] text-[#614a00] border-[#ffe082]">
               <i class="pi pi-exclamation-triangle"></i>
               <span>Running beyond the vendor limits is at your own risk. It increases heat and power draw, can cause instability,
-                and may shorten the lifespan of (or damage) the ASIC, voltage regulator and power supply. Make sure your cooling and
-                power supply can handle it, and keep a Max Temp and Max Power Limit set. Autotune still starts from safe defaults
-                after every restart and backs off on overtemp, power limit and instability.</span>
+                and may shorten the lifespan of (or damage) the ASIC, voltage regulator and power supply. With Max Frequency at 0
+                there is no fixed limit: only temperature, power and stability stop the climb, so make sure your cooling and power
+                supply can handle it and set Max Temp and Max Power Limit to values your hardware can take. Autotune still starts
+                from safe defaults after every restart and backs off on overtemp, power limit and instability.</span>
             </div>
           }
           <div class="flex flex-col md:flex-row md:items-center mb-4 gap-2">

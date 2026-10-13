@@ -37,7 +37,8 @@
 
 #define VENDOR_FREQUENCY_STEP_MHZ 10.0f
 #define OVERCLOCK_FREQUENCY_STEP_MHZ 5.0f
-#define OVERCLOCK_FREQUENCY_HEADROOM_MHZ 150.0f // automatic ceiling above vendor max when beyond-vendor tuning is allowed
+#define BEYOND_VENDOR_NO_FREQUENCY_CAP 65535.0f // beyond-vendor with Max Frequency 0: no fixed cap, temp/power/stability decide
+#define BEYOND_VENDOR_TEMP_MARGIN_C 3.0f        // beyond-vendor without a user Max Temp: stop climbing this far below the overtemp limit
 #define MAX_CUSTOM_VOLTAGE_STEP_MV 50       // a typo in the custom step must not turn into a huge voltage jump
 #define MAX_CUSTOM_FREQUENCY_STEP_MHZ 50.0f
 #define ECO_EFFICIENCY_TOLERANCE 0.98f // allow 2% noise before treating a climb as an efficiency regression
@@ -124,7 +125,9 @@ static float effective_max_frequency(const AsicConfig * asic, bool overclock_ena
     float user_max = nvs_config_get_float(NVS_CONFIG_AUTOTUNE_MAX_FREQUENCY);
 
     if (user_max <= 0.0f) {
-        return beyond_vendor ? vendor_max + OVERCLOCK_FREQUENCY_HEADROOM_MHZ : vendor_max;
+        // 0 really means "no fixed limit" once the user opted into beyond-vendor
+        // tuning: climbing is then stopped only by temperature, power and stability.
+        return beyond_vendor ? BEYOND_VENDOR_NO_FREQUENCY_CAP : vendor_max;
     }
     return overclock_enabled ? user_max : (user_max < vendor_max ? user_max : vendor_max);
 }
@@ -341,13 +344,29 @@ void autotune_task(void *pvParameters)
         float max_frequency = effective_max_frequency(asic, overclock_enabled, beyond_vendor);
 
         float current_power = GLOBAL_STATE->POWER_MANAGEMENT_MODULE.power;
+        float vendor_max_frequency = (float) frequency_table_max(asic);
         float max_power_limit = nvs_config_get_float(NVS_CONFIG_MAX_POWER_LIMIT);
+        if (beyond_vendor && max_power_limit <= 0.0f) {
+            // No user power limit: the board's own design limit is the reactive ceiling.
+            max_power_limit = (float) GLOBAL_STATE->DEVICE_CONFIG.family.max_power;
+        }
         bool over_power_limit = max_power_limit > 0.0f && current_power > max_power_limit;
 
         float temp = 0.0f;
         bool overtemp = false;
         const char * instability_reason = "stable";
         bool unstable = read_is_unstable(GLOBAL_STATE, &temp, &overtemp, &instability_reason);
+
+        // Temperature at which climbing stops (Performance mode). Beyond-vendor
+        // without a user Max Temp still gets one, just below the overtemp limit,
+        // so climbing settles instead of bouncing off overtemp.
+        float max_temp_c = user_max_temp_c();
+        if (beyond_vendor && max_temp_c <= 0.0f) {
+            max_temp_c = AUTOTUNE_TEMP_LIMIT_C - BEYOND_VENDOR_TEMP_MARGIN_C;
+        }
+        bool temp_ceiling_reached = performance_mode && max_temp_c > 0.0f && temp >= max_temp_c;
+        // Past the vendor table the only limits are reactive, so they need live readings.
+        bool sensors_valid = temp > 0.0f && current_power > 0.0f;
         if (over_power_limit || overtemp || unstable) {
             // A safety event invalidates the previous Performance target. After
             // recovery, require a fresh stable climb before starting another hold.
@@ -458,12 +477,13 @@ void autotune_task(void *pvParameters)
                 // the error rate lags behind, so reacting again now would stack steps.
                 at->state = AUTOTUNE_STATE_HELD;
             } else if (at->rescue_attempts < MAX_CONSECUTIVE_RESCUES && core_voltage < max_voltage
+                       && !temp_ceiling_reached
                        && !(max_power_limit > 0.0f && current_power >= max_power_limit * PROACTIVE_POWER_MARGIN)) {
-                // The power-limit check above matters: rescuing (raising voltage)
-                // while already near the power cap would just push power back up
-                // and undo the reason a prior shave brought voltage down in the
-                // first place - a real oscillation risk. Skip straight to
-                // frequency retreat in that case instead.
+                // The power-limit and temp checks above matter: rescuing (raising
+                // voltage) while already near the power cap or temp ceiling would
+                // just push power/heat back up and undo the reason a prior shave
+                // brought voltage down in the first place - a real oscillation
+                // risk. Skip straight to frequency retreat in that case instead.
                 uint16_t step = voltage_step(asic, core_voltage, overclock_enabled, performance_mode);
                 uint16_t new_voltage = core_voltage + step;
                 if (new_voltage > max_voltage) {
@@ -555,12 +575,17 @@ void autotune_task(void *pvParameters)
                                       && efficiency < at->last_efficiency_ghs_w * ECO_EFFICIENCY_TOLERANCE
                                       && core_frequency > floor_freq_mhz;
 
-                float max_temp_c = user_max_temp_c();
-                bool temp_ceiling_reached = performance_mode && max_temp_c > 0.0f && temp >= max_temp_c;
                 bool power_ceiling_near = max_power_limit > 0.0f && current_power >= max_power_limit * PROACTIVE_POWER_MARGIN;
                 bool error_rate_near_limit = at->error_rate_pct >= PROACTIVE_ERROR_RATE_PCT;
 
-                bool climbing_allowed = (performance_mode ? !temp_ceiling_reached : !at->eco_peak_found) && !power_ceiling_near && !error_rate_near_limit;
+                // Within ~1 MHz of a frequency that already proved unstable: that's the
+                // chip's own ceiling, settle here instead of re-testing it every cycle.
+                bool at_unstable_ceiling = performance_mode && at->unstable_ceiling_mhz > 0.0f
+                                           && core_frequency + 1.0f >= at->unstable_ceiling_mhz;
+                bool beyond_blocked = core_frequency >= vendor_max_frequency && !sensors_valid;
+
+                bool climbing_allowed = (performance_mode ? !temp_ceiling_reached : !at->eco_peak_found) && !power_ceiling_near
+                                        && !error_rate_near_limit && !at_unstable_ceiling && !beyond_blocked;
 
                 if (eco_regressed) {
                     // Eco mode: the last climb step made hash/watt worse - that step
@@ -593,6 +618,10 @@ void autotune_task(void *pvParameters)
                     float new_frequency = core_frequency + step;
                     if (new_frequency > max_frequency) {
                         new_frequency = max_frequency;
+                    }
+                    if (performance_mode && at->unstable_ceiling_mhz > 0.0f && new_frequency > at->unstable_ceiling_mhz - 1.0f) {
+                        // Never step onto a frequency that already failed - settle just below it.
+                        new_frequency = at->unstable_ceiling_mhz - 1.0f;
                     }
 
                     ESP_LOGI(TAG, "Stable - climbing frequency %g -> %g MHz", core_frequency, new_frequency);
@@ -646,7 +675,8 @@ void autotune_task(void *pvParameters)
                         at->last_step_mv = (int16_t)(new_voltage - core_voltage);
                         mark_action_time(at);
                     } else if (performance_mode
-                               && (core_frequency >= max_frequency || temp_ceiling_reached || power_ceiling_near || error_rate_near_limit)) {
+                               && (core_frequency >= max_frequency || temp_ceiling_reached || power_ceiling_near || error_rate_near_limit
+                                   || at_unstable_ceiling || beyond_blocked)) {
                         at->performance_hold_remaining = PERFORMANCE_HOLD_CHECKS;
                         at->state = AUTOTUNE_STATE_HOLDING;
                         at->reason = "performance_hold";
