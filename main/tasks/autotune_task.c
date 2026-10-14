@@ -39,6 +39,7 @@
 #define OVERCLOCK_FREQUENCY_STEP_MHZ 5.0f
 #define BEYOND_VENDOR_NO_FREQUENCY_CAP 65535.0f // beyond-vendor with Max Frequency 0: no fixed cap, temp/power/stability decide
 #define BEYOND_VENDOR_TEMP_MARGIN_C 3.0f        // beyond-vendor without a user Max Temp: stop climbing this far below the overtemp limit
+#define UNSTABLE_FLOOR_RELEASE_MHZ 25.0f        // the learned voltage floor only lapses after a real frequency drop, not a small ease
 #define MAX_CUSTOM_VOLTAGE_STEP_MV 50       // a typo in the custom step must not turn into a huge voltage jump
 #define MAX_CUSTOM_FREQUENCY_STEP_MHZ 50.0f
 #define ECO_EFFICIENCY_TOLERANCE 0.98f // allow 2% noise before treating a climb as an efficiency regression
@@ -277,6 +278,10 @@ void autotune_task(void *pvParameters)
 
     bool last_performance_mode = nvs_config_get_bool(NVS_CONFIG_AUTOTUNE_PROFILE);
 
+    // True while the most recent autotune action was an efficiency voltage shave:
+    // a rising error rate right after it means the shave went one step too far.
+    bool last_action_was_shave = false;
+
     ESP_LOGI(TAG, "Starting (voltage floor %umV, frequency floor %g MHz)", vendor_min_mv, floor_freq_mhz);
 
     TickType_t taskWakeTime = xTaskGetTickCount();
@@ -300,6 +305,7 @@ void autotune_task(void *pvParameters)
             reaction_backoff = 0;
             unstable_floor_mv = 0;
             unstable_floor_freq_mhz = 0.0f;
+            last_action_was_shave = false;
             continue;
         }
 
@@ -334,8 +340,8 @@ void autotune_task(void *pvParameters)
         uint16_t core_voltage = nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE);
         float core_frequency = nvs_config_get_float(NVS_CONFIG_ASIC_FREQUENCY);
 
-        if (unstable_floor_mv > 0 && core_frequency < unstable_floor_freq_mhz) {
-            // Running slower than where the floor was learned - lower voltage may be fine again.
+        if (unstable_floor_mv > 0 && core_frequency < unstable_floor_freq_mhz - UNSTABLE_FLOOR_RELEASE_MHZ) {
+            // Running clearly slower than where the floor was learned - lower voltage may be fine again.
             unstable_floor_mv = 0;
             unstable_floor_freq_mhz = 0.0f;
         }
@@ -432,6 +438,7 @@ void autotune_task(void *pvParameters)
                 at->state = AUTOTUNE_STATE_SHAVING;
                 at->last_step_mv = (int16_t)(new_voltage - core_voltage);
                 mark_action_time(at);
+                last_action_was_shave = false;
             } else if (core_frequency > floor_freq_mhz) {
                 float new_frequency = core_frequency - frequency_step(asic, core_frequency, overclock_enabled, performance_mode);
                 if (new_frequency < floor_freq_mhz) {
@@ -454,6 +461,7 @@ void autotune_task(void *pvParameters)
                 at->state = AUTOTUNE_STATE_RETREATING;
                 at->last_step_mhz = step_delta_mhz(new_frequency, core_frequency);
                 mark_action_time(at);
+                last_action_was_shave = false;
             } else {
                 at->state = AUTOTUNE_STATE_HELD;
                 if (overtemp) {
@@ -500,11 +508,13 @@ void autotune_task(void *pvParameters)
                 }
                 at->rescue_attempts++;
                 at->unstable_checks = 0;
+                at->unstable_ceiling_mhz = 0.0f; // a ceiling found at the lower voltage no longer applies
                 reaction_backoff = RETREAT_COOLDOWN_CHECKS;
                 at->backoff_remaining = RESCUE_COOLDOWN_CHECKS;
                 at->state = AUTOTUNE_STATE_RESCUING;
                 at->last_step_mv = (int16_t)(new_voltage - core_voltage);
                 mark_action_time(at);
+                last_action_was_shave = false;
             } else if (core_frequency > floor_freq_mhz) {
                 // Voltage is maxed out or we've exhausted rescue attempts at this
                 // frequency. Retreat is gated by reaction_backoff above so a single
@@ -532,6 +542,7 @@ void autotune_task(void *pvParameters)
                 at->state = AUTOTUNE_STATE_RETREATING;
                 at->last_step_mhz = step_delta_mhz(new_frequency, core_frequency);
                 mark_action_time(at);
+                last_action_was_shave = false;
             } else {
                 at->state = AUTOTUNE_STATE_HELD;
                 if (!rescue_limit_warned) {
@@ -580,7 +591,7 @@ void autotune_task(void *pvParameters)
 
                 // Within ~1 MHz of a frequency that already proved unstable: that's the
                 // chip's own ceiling, settle here instead of re-testing it every cycle.
-                bool at_unstable_ceiling = performance_mode && at->unstable_ceiling_mhz > 0.0f
+                bool at_unstable_ceiling = at->unstable_ceiling_mhz > 0.0f
                                            && core_frequency + 1.0f >= at->unstable_ceiling_mhz;
                 bool beyond_blocked = core_frequency >= vendor_max_frequency && !sensors_valid;
 
@@ -603,6 +614,7 @@ void autotune_task(void *pvParameters)
                     at->state = AUTOTUNE_STATE_RETREATING;
                     at->last_step_mhz = step_delta_mhz(new_frequency, core_frequency);
                     mark_action_time(at);
+                    last_action_was_shave = false;
                 } else if (climbing_allowed && core_frequency < max_frequency) {
                     if (at->unstable_ceiling_mhz > 0.0f && core_frequency >= at->unstable_ceiling_mhz) {
                         // Already proven stable at/above the last known failure point - it's stale.
@@ -619,7 +631,7 @@ void autotune_task(void *pvParameters)
                     if (new_frequency > max_frequency) {
                         new_frequency = max_frequency;
                     }
-                    if (performance_mode && at->unstable_ceiling_mhz > 0.0f && new_frequency > at->unstable_ceiling_mhz - 1.0f) {
+                    if (at->unstable_ceiling_mhz > 0.0f && new_frequency > at->unstable_ceiling_mhz - 1.0f) {
                         // Never step onto a frequency that already failed - settle just below it.
                         new_frequency = at->unstable_ceiling_mhz - 1.0f;
                     }
@@ -630,6 +642,35 @@ void autotune_task(void *pvParameters)
                     at->state = AUTOTUNE_STATE_CLIMBING;
                     at->last_step_mhz = step_delta_mhz(new_frequency, core_frequency);
                     mark_action_time(at);
+                    last_action_was_shave = false;
+                } else if (error_rate_near_limit && (performance_mode || last_action_was_shave) && core_voltage < max_voltage
+                           && !temp_ceiling_reached && !power_ceiling_near) {
+                    // Performance mode with temp/power headroom: a rising error rate means
+                    // this frequency wants a bit more voltage. Add one step now instead of
+                    // giving the frequency up - that's how it gets past the point where the
+                    // default voltage runs out. In Eco mode this only happens right after a
+                    // shave, i.e. it undoes a shave that went one step too far. The current
+                    // voltage becomes the floor so shaving never walks back into it.
+                    uint16_t step = voltage_step(asic, core_voltage, overclock_enabled, performance_mode);
+                    uint16_t new_voltage = core_voltage + step;
+                    if (new_voltage > max_voltage) {
+                        new_voltage = max_voltage;
+                    }
+
+                    ESP_LOGI(TAG, "Stable but error rate rising (%.2f%% >= %.2f%%) - raising voltage %umV -> %umV to keep climbing",
+                             at->error_rate_pct, PROACTIVE_ERROR_RATE_PCT, core_voltage, new_voltage);
+                    nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, new_voltage);
+                    if (core_voltage >= unstable_floor_mv) {
+                        unstable_floor_mv = core_voltage;
+                        unstable_floor_freq_mhz = core_frequency;
+                    }
+                    at->unstable_ceiling_mhz = 0.0f; // any ceiling found at the lower voltage no longer applies
+                    at->backoff_remaining = RETREAT_COOLDOWN_CHECKS; // let the error rate settle before judging
+                    at->last_efficiency_ghs_w = 0.0f;
+                    at->state = AUTOTUNE_STATE_RESCUING;
+                    at->last_step_mv = (int16_t)(new_voltage - core_voltage);
+                    mark_action_time(at);
+                    last_action_was_shave = false;
                 } else if (error_rate_near_limit && core_frequency > floor_freq_mhz) {
                     // Rising error rate means this frequency is marginal at the current
                     // voltage - ease frequency down instead of lowering voltage, which
@@ -648,6 +689,7 @@ void autotune_task(void *pvParameters)
                     at->state = AUTOTUNE_STATE_RETREATING;
                     at->last_step_mhz = step_delta_mhz(new_frequency, core_frequency);
                     mark_action_time(at);
+                    last_action_was_shave = false;
                 } else {
                     // Climbing has stopped: at the frequency ceiling, at the Eco
                     // efficiency peak, or (Performance mode) at the user's temp
@@ -674,6 +716,7 @@ void autotune_task(void *pvParameters)
                         at->state = AUTOTUNE_STATE_SHAVING;
                         at->last_step_mv = (int16_t)(new_voltage - core_voltage);
                         mark_action_time(at);
+                        last_action_was_shave = true;
                     } else if (performance_mode
                                && (core_frequency >= max_frequency || temp_ceiling_reached || power_ceiling_near || error_rate_near_limit
                                    || at_unstable_ceiling || beyond_blocked)) {
