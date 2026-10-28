@@ -16,6 +16,7 @@
 #define AUTOTUNE_MAX_USER_TEMP_C 70.0f      // user temp ceiling is clamped below power_management's 75C hard overheat shutdown
 #define DOMAIN_SHORTFALL_LIMIT 0.50f       // a single hash domain running below 50% of its expected share counts as unstable
 #define ERROR_RATE_LIMIT_PCT 2.0f          // >2% ASIC error rate counts as unstable
+#define PERFORMANCE_MAX_ERROR_PCT 1.75f    // Performance mode climbs past 1% when it yields more valid hashes, but keeps this margin below the 2% instability cutoff
 #define PROACTIVE_ERROR_RATE_PCT 1.0f      // stop climbing and shave voltage once error rate reaches this, before the harder instability cutoff
 
 // Check-counts below are scaled to POLL_RATE_MS so the real-world durations
@@ -47,6 +48,8 @@
 // ~20s time constant: after the 60s stable window following a climb the average
 // has caught up ~95% of the step, so Eco efficiency comparisons aren't skewed by lag.
 #define POWER_AVERAGE_ALPHA ((float) POLL_RATE_MS / 20000.0f)
+#define ERROR_AVERAGE_ALPHA ((float) POLL_RATE_MS / 20000.0f) // ~20s time constant: decisions use a smoothed error rate, not one noisy reading
+#define VALID_EVAL_CHECKS 24 // ~60s after a climb (or boost) before judging whether it raised the valid hashrate
 
 static const char * TAG = "autotune";
 
@@ -282,6 +285,15 @@ void autotune_task(void *pvParameters)
     // a rising error rate right after it means the shave went one step too far.
     bool last_action_was_shave = false;
 
+    // Performance mode judges every climb by valid hashrate: frequency x (1 - error
+    // rate). That is what actually produces shares (and so high-difficulty ones);
+    // a step that adds more errors than hashes is undone. eval_from_mhz > 0 means a
+    // climb is waiting to be judged against eval_base_valid.
+    float error_avg_pct = -1.0f;
+    float eval_base_valid = 0.0f;
+    float eval_from_mhz = 0.0f;
+    int eval_wait = 0;
+
     ESP_LOGI(TAG, "Starting (voltage floor %umV, frequency floor %g MHz)", vendor_min_mv, floor_freq_mhz);
 
     TickType_t taskWakeTime = xTaskGetTickCount();
@@ -306,6 +318,8 @@ void autotune_task(void *pvParameters)
             unstable_floor_mv = 0;
             unstable_floor_freq_mhz = 0.0f;
             last_action_was_shave = false;
+            error_avg_pct = -1.0f;
+            eval_from_mhz = 0.0f;
             continue;
         }
 
@@ -313,6 +327,8 @@ void autotune_task(void *pvParameters)
             at->power_1m_w = 0.0f;
             at->performance_hold_remaining = 0;
             at->unstable_ceiling_mhz = 0.0f;
+            error_avg_pct = -1.0f;
+            eval_from_mhz = 0.0f;
             continue;
         }
 
@@ -321,6 +337,9 @@ void autotune_task(void *pvParameters)
         }
         if (reaction_backoff > 0) {
             reaction_backoff--;
+        }
+        if (eval_wait > 0) {
+            eval_wait--;
         }
 
         bool performance_mode = nvs_config_get_bool(NVS_CONFIG_AUTOTUNE_PROFILE);
@@ -335,6 +354,7 @@ void autotune_task(void *pvParameters)
             // Efficiency baselines from the other mode don't apply: start the Eco search fresh.
             at->eco_peak_found = false;
             at->last_efficiency_ghs_w = 0.0f;
+            eval_from_mhz = 0.0f;
             last_performance_mode = performance_mode;
         }
         uint16_t core_voltage = nvs_config_get_u16(NVS_CONFIG_ASIC_VOLTAGE);
@@ -389,6 +409,11 @@ void autotune_task(void *pvParameters)
         at->temperature_c = temp;
         at->power_w = current_power;
         at->error_rate_pct = GLOBAL_STATE->SYSTEM_MODULE.error_percentage;
+        if (error_avg_pct < 0.0f) {
+            error_avg_pct = at->error_rate_pct;
+        } else {
+            error_avg_pct += (at->error_rate_pct - error_avg_pct) * ERROR_AVERAGE_ALPHA;
+        }
         at->efficiency_ghs_w = efficiency;
 
         if (overtemp) {
@@ -414,6 +439,7 @@ void autotune_task(void *pvParameters)
             // after 30s just retriggers the same cycle.
             at->stable_checks = 0;
             at->unstable_checks = 0;
+            eval_from_mhz = 0.0f; // readings during a safety event can't judge the last climb
             int cooldown = overtemp ? OVERTEMP_COOLDOWN_CHECKS : RETREAT_COOLDOWN_CHECKS;
 
             if (safety_backoff > 0) {
@@ -474,6 +500,7 @@ void autotune_task(void *pvParameters)
         } else if (unstable) {
             at->stable_checks = 0;
             at->unstable_checks++;
+            eval_from_mhz = 0.0f; // the instability path takes over judging this frequency
 
             if (at->unstable_checks < UNSTABLE_CONFIRM_CHECKS) {
                 // Single noisy reading - wait for it to repeat before reacting.
@@ -574,6 +601,12 @@ void autotune_task(void *pvParameters)
             } else if (at->stable_checks >= (performance_mode
                                              ? PERFORMANCE_STABLE_CHECKS_BEFORE_ACTION
                                              : STABLE_CHECKS_BEFORE_ACTION)) {
+                if (performance_mode && eval_from_mhz > 0.0f && eval_wait > 0) {
+                    // The averaged error rate hasn't caught up with the last step yet -
+                    // check again next poll instead of judging it on stale numbers.
+                    continue;
+                }
+
                 // Only a full stable window clears the rescue budget - a single good
                 // reading between rough patches must not reset it.
                 at->rescue_attempts = 0;
@@ -587,7 +620,22 @@ void autotune_task(void *pvParameters)
                                       && core_frequency > floor_freq_mhz;
 
                 bool power_ceiling_near = max_power_limit > 0.0f && current_power >= max_power_limit * PROACTIVE_POWER_MARGIN;
-                bool error_rate_near_limit = at->error_rate_pct >= PROACTIVE_ERROR_RATE_PCT;
+                bool error_rate_near_limit = error_avg_pct >= PROACTIVE_ERROR_RATE_PCT;
+                bool can_boost = core_voltage < max_voltage && !temp_ceiling_reached && !power_ceiling_near;
+
+                // Valid hashrate is proportional to frequency x share of error-free results.
+                float valid_now = core_frequency * (1.0f - error_avg_pct / 100.0f);
+                bool valid_regressed = false;
+                if (performance_mode && eval_from_mhz > 0.0f) {
+                    // A step that lands above the error margin doesn't pay either: it sits
+                    // right at the instability cutoff, where one noisy reading undoes it.
+                    if (core_frequency > eval_from_mhz
+                        && (valid_now < eval_base_valid || error_avg_pct >= PERFORMANCE_MAX_ERROR_PCT)) {
+                        valid_regressed = true;
+                    } else {
+                        eval_from_mhz = 0.0f; // the step paid off (or the frequency changed elsewhere)
+                    }
+                }
 
                 // Within ~1 MHz of a frequency that already proved unstable: that's the
                 // chip's own ceiling, settle here instead of re-testing it every cycle.
@@ -595,8 +643,13 @@ void autotune_task(void *pvParameters)
                                            && core_frequency + 1.0f >= at->unstable_ceiling_mhz;
                 bool beyond_blocked = core_frequency >= vendor_max_frequency && !sensors_valid;
 
+                // A rising error rate stops climbing, except in Performance mode when no
+                // more voltage is available: then each step is judged on valid hashrate
+                // instead, so it only goes as far as it actually yields more good hashes.
                 bool climbing_allowed = (performance_mode ? !temp_ceiling_reached : !at->eco_peak_found) && !power_ceiling_near
-                                        && !error_rate_near_limit && !at_unstable_ceiling && !beyond_blocked;
+                                        && !(error_rate_near_limit && (!performance_mode || can_boost))
+                                        && !(performance_mode && error_avg_pct >= PERFORMANCE_MAX_ERROR_PCT)
+                                        && !valid_regressed && !at_unstable_ceiling && !beyond_blocked;
 
                 if (eco_regressed) {
                     // Eco mode: the last climb step made hash/watt worse - that step
@@ -638,13 +691,17 @@ void autotune_task(void *pvParameters)
 
                     ESP_LOGI(TAG, "Stable - climbing frequency %g -> %g MHz", core_frequency, new_frequency);
                     nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, new_frequency);
+                    if (performance_mode) {
+                        eval_base_valid = valid_now;
+                        eval_from_mhz = core_frequency;
+                        eval_wait = VALID_EVAL_CHECKS;
+                    }
                     at->last_efficiency_ghs_w = efficiency; // baseline to judge this climb against next time
                     at->state = AUTOTUNE_STATE_CLIMBING;
                     at->last_step_mhz = step_delta_mhz(new_frequency, core_frequency);
                     mark_action_time(at);
                     last_action_was_shave = false;
-                } else if (error_rate_near_limit && (performance_mode || last_action_was_shave) && core_voltage < max_voltage
-                           && !temp_ceiling_reached && !power_ceiling_near) {
+                } else if ((error_rate_near_limit || valid_regressed) && (performance_mode || last_action_was_shave) && can_boost) {
                     // Performance mode with temp/power headroom: a rising error rate means
                     // this frequency wants a bit more voltage. Add one step now instead of
                     // giving the frequency up - that's how it gets past the point where the
@@ -657,8 +714,16 @@ void autotune_task(void *pvParameters)
                         new_voltage = max_voltage;
                     }
 
-                    ESP_LOGI(TAG, "Stable but error rate rising (%.2f%% >= %.2f%%) - raising voltage %umV -> %umV to keep climbing",
-                             at->error_rate_pct, PROACTIVE_ERROR_RATE_PCT, core_voltage, new_voltage);
+                    if (valid_regressed) {
+                        ESP_LOGI(TAG, "Climb to %g MHz lost valid hashrate (%.1f -> %.1f, errors %.2f%%) - raising voltage %umV -> %umV",
+                                 core_frequency, eval_base_valid, valid_now, error_avg_pct, core_voltage, new_voltage);
+                    } else {
+                        ESP_LOGI(TAG, "Stable but error rate rising (%.2f%% >= %.2f%%) - raising voltage %umV -> %umV to keep climbing",
+                                 error_avg_pct, PROACTIVE_ERROR_RATE_PCT, core_voltage, new_voltage);
+                    }
+                    if (eval_from_mhz > 0.0f) {
+                        eval_wait = VALID_EVAL_CHECKS; // judge the pending climb again once this voltage has settled
+                    }
                     nvs_config_set_u16(NVS_CONFIG_ASIC_VOLTAGE, new_voltage);
                     if (core_voltage >= unstable_floor_mv) {
                         unstable_floor_mv = core_voltage;
@@ -671,7 +736,22 @@ void autotune_task(void *pvParameters)
                     at->last_step_mv = (int16_t)(new_voltage - core_voltage);
                     mark_action_time(at);
                     last_action_was_shave = false;
-                } else if (error_rate_near_limit && core_frequency > floor_freq_mhz) {
+                } else if (valid_regressed) {
+                    // The last climb produced fewer valid hashes than before and there's no
+                    // voltage headroom left to fix that: undo it and settle below it.
+                    ESP_LOGI(TAG, "Climb to %g MHz lost valid hashrate (%.1f -> %.1f, errors %.2f%%) - back to %g MHz",
+                             core_frequency, eval_base_valid, valid_now, error_avg_pct, eval_from_mhz);
+                    nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, eval_from_mhz);
+                    at->unstable_ceiling_mhz = core_frequency;
+                    at->last_efficiency_ghs_w = 0.0f;
+                    at->state = AUTOTUNE_STATE_RETREATING;
+                    at->last_step_mhz = step_delta_mhz(eval_from_mhz, core_frequency);
+                    eval_from_mhz = 0.0f;
+                    mark_action_time(at);
+                    last_action_was_shave = false;
+                } else if (error_rate_near_limit && !performance_mode && core_frequency > floor_freq_mhz) {
+                    // Eco mode (Performance mode judges this on valid hashrate instead and
+                    // leaves real instability above 2% to the rescue/retreat path).
                     // Rising error rate means this frequency is marginal at the current
                     // voltage - ease frequency down instead of lowering voltage, which
                     // would only reduce the stability margin further and risk a real
@@ -682,7 +762,7 @@ void autotune_task(void *pvParameters)
                     }
 
                     ESP_LOGI(TAG, "Stable but error rate rising (%.2f%% >= %.2f%%) - easing frequency %g -> %g MHz",
-                             at->error_rate_pct, PROACTIVE_ERROR_RATE_PCT, core_frequency, new_frequency);
+                             error_avg_pct, PROACTIVE_ERROR_RATE_PCT, core_frequency, new_frequency);
                     nvs_config_set_float(NVS_CONFIG_ASIC_FREQUENCY, new_frequency);
                     at->unstable_ceiling_mhz = core_frequency; // climb back to this point carefully next time
                     at->last_efficiency_ghs_w = 0.0f;
